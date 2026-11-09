@@ -9,7 +9,7 @@ env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: openwrt-24.10
   # 这里严格对应你图片中的 working-directory
-  WORK_PATH: /home/runner/work/openwrt/openwrt/
+  WORK_PATH: /home/runner/work/imm/imm/
   # 对应你图片中 clone 出来的子目录名
   SOURCE_DIR: openwrt
 
