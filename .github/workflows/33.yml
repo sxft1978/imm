@@ -121,35 +121,63 @@ jobs:
         pwd
         ls 
                        
-    - name: Clone source code
-      working-directory: /home/runner/work/Openwrt/Openwrt/
-      run: |
-        df -hT $PWD      
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /home/runner/work/Openwrt/Openwrt/openwrt $GITHUB_WORKSPACE/openwrt
+    # 【关键】完全复刻你图片的目录操作逻辑
+      - name: Clone Source Code (Strict Path)
+        run: |
+          # 1. 确保父目录存在并进入
+          mkdir -p ${{ env.WORK_PATH }}
+          cd ${{ env.WORK_PATH }}
+          
+          # 2. 检查磁盘空间 (对应图片 df -hT)
+          df -hT $PWD
+          
+          # 3. 克隆源码到子目录 (对应图片 git clone ... openwrt)
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          
+          # 4. 建立软链接 (对应图片 ln -sf ...)
+          # 将源码目录链接到工作区根目录，方便后续步骤调用
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds
-      run: |
-        # [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        #chmod +x $DIY_P1_SH
-        #cd openwrt
-        #$GITHUB_WORKSPACE/$DIY_P1_SH
+      # 恢复之前的编译缓存 (dl, feeds, staging_dir)
+      - name: Restore Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('**/feeds.conf.default') }}
+          restore-keys: |
+            immortalwrt-toolchain-${{ runner.os }}-
 
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+      # 执行 P1 脚本 (Feeds 更新等)
+      - name: Load Custom Feeds & Update
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        run: |
+          [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $GITHUB_WORKSPACE/feeds.conf.default feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
+      # 【核心】只编译工具链
+      - name: Compile Toolchain Only
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        run: |
+          # 加载你的配置文件
+          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
+          
+          # 执行 make toolchain/install
+          make -j$(nproc) toolchain/install
 
-    - name: Load custom configuration
-      run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
-        cd openwrt        
-        $GITHUB_WORKSPACE/$DIY_P2_SH 
-        df -hT
-
+      # 强制保存工具链缓存
+      - name: Save Toolchain Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('**/feeds.conf.default') }}-${{ github.run_id }}
     - name: Get architecture
       working-directory: ${{ github.workspace }}/openwrt
       run: |
