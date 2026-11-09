@@ -100,10 +100,10 @@ jobs:
           free -h
       - name: 检查清理后的磁盘空间
         run: |
-        echo "清理并挂载 Swap 完成"
-        echo "=============================================================================="
-        df -hT
-        echo "=============================================================================="
+          echo "清理并挂载 Swap 完成"
+          echo "=============================================================================="
+          df -hT
+          echo "=============================================================================="
 
       - name: Checkout
         uses: actions/checkout@main
@@ -113,13 +113,13 @@ jobs:
         env:
         DEBIAN_FRONTEND: noninteractive
         run: |
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1976/Openwrt/raw/main/diy_script/immortalwrt_dependence)
-        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
-        sudo timedatectl set-timezone "$TZ"
-        df -hT $PWD
-        pwd
-        ls 
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1976/Openwrt/raw/main/diy_script/immortalwrt_dependence)
+          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+          sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
+          pwd
+          ls 
                        
     # 【关键】完全复刻你图片的目录操作逻辑
       - name: Clone Source Code (Strict Path)
