@@ -49,15 +49,7 @@ jobs:
           sudo umount /mnt || true
           sudo rm -rf /mnt/* || true
           echo ">>> 2. 彻底卸载巨无霸软件 (Mono, Haskell, etc.)..."
-          sudo apt-get purge -y \
-          mono-complete \
-          ghc* \
-          google-cloud-sdk \
-          azure-cli \
-          powershell \`
-          dotnet* \
-          swift* \
-          || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell  dotnet* swift* || true
 
           echo ">>> 3. 暴力删除预装的大型开发工具目录..."
           sudo rm -rf /usr/local/lib/android || true
