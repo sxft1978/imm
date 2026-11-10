@@ -1,4 +1,4 @@
-name: ImmortalWrt B86_64
+name: Imm B86_64
 on:
   workflow_dispatch:
   push:
