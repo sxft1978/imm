@@ -158,9 +158,9 @@ jobs:
           [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
           cd openwrt
           echo -e "$(nproc) thread compile"
-          cat -A ./.config
+          #cat -A ./.config
           # make -j$(nproc) || make -j1 || make -j1 V=s
-          make -j1 toolchain/install
+          make -j1  V=sc toolchain/install
 
       # 强制保存工具链缓存
       - name: Save Toolchain Cache
