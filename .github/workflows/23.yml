@@ -135,7 +135,9 @@ jobs:
       - name: Load Custom Feeds & Update
         working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
-          [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $GITHUB_WORKSPACE/feeds.conf.default feeds.conf.default
+          pwd
+          [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $FEEDS_CONF feeds.conf.default
+          cat -A feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -143,9 +145,10 @@ jobs:
       - name: Compile Toolchain Only
         working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
+          ls $GITHUB_WORKSPACE
           pwd
           # 加载你的配置文件
-          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+          [ -e $GITHUB_WORKSPACE/.config ] && cp $CONFIG_FILE .config
           echo -e "$(nproc) thread compile"
           cat -A .config
           # make -j$(nproc) || make -j1 || make -j1 V=s
