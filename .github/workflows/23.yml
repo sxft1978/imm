@@ -105,10 +105,11 @@ jobs:
 
       # 【关键】完全复刻你图片的目录操作逻辑
       - name: Clone Source Code (Strict Path)
+        working-directory: ${{ env.WORK_PATH }}
         run: |
           # 1. 确保父目录存在并进入
-          mkdir -p ${{ env.WORK_PATH }}
-          cd ${{ env.WORK_PATH }}
+          #mkdir -p ${{ env.WORK_PATH }}
+          # cd ${{ env.WORK_PATH }}
           
           # 2. 检查磁盘空间 (对应图片 df -hT)
           df -hT $PWD
@@ -134,11 +135,12 @@ jobs:
 
       # 执行 P1 脚本 (Feeds 更新等)
       - name: Load Custom Feeds & Update
-        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
           pwd
-          [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $FEEDS_CONF feeds.conf.default
+          [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+          cd openwrt
           cat -A feeds.conf.default
+          $GITHUB_WORKSPACE/$DIY_P1_SH
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
