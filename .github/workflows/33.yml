@@ -1,4 +1,4 @@
-name: ImmortalWrt x86_64
+name: ImmortalWrt Build_x86_64
 on:
   workflow_dispatch:
   push:
@@ -7,7 +7,7 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: openwrt-24.10
-  WORK_PATH: /home/runner/work/openwrt/openwrt/
+  WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/X86.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
@@ -47,15 +47,7 @@ jobs:
           sudo umount /mnt || true
           sudo rm -rf /mnt/* || true
           echo ">>> 2. 彻底卸载巨无霸软件 (Mono, Haskell, etc.)..."
-          sudo apt-get purge -y \
-          mono-complete \
-          ghc* \
-          google-cloud-sdk \
-          azure-cli \
-          powershell \`
-          dotnet* \
-          swift* \
-          || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift*  || true
 
           echo ">>> 3. 暴力删除预装的大型开发工具目录..."
           sudo rm -rf /usr/local/lib/android || true
@@ -278,7 +270,7 @@ jobs:
 
 # 执行 P2 脚本 (自定义配置等)
       - name: Load Custom Configuration
-          working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
           [ -e $GITHUB_WORKSPACE/files ] && mv $GITHUB_WORKSPACE/files files
           [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
@@ -386,3 +378,4 @@ jobs:
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
