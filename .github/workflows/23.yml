@@ -141,8 +141,13 @@ jobs:
           cd openwrt
           cat -A feeds.conf.default
           $GITHUB_WORKSPACE/$DIY_P1_SH
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+        
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+        
 
       # 【核心】只编译工具链
       - name: Compile Toolchain Only
