@@ -261,12 +261,21 @@ jobs:
           pwd
           ls
 
-      # 再次执行目录克隆和链接 (因为 Job 之间环境不互通)
       - name: Clone Source Code (Strict Path)
+        working-directory: ${{ env.WORK_PATH }}
         run: |
-          mkdir -p ${{ env.WORK_PATH }}
-          cd ${{ env.WORK_PATH }}
+          # 1. 确保父目录存在并进入
+          #mkdir -p ${{ env.WORK_PATH }}
+          # cd ${{ env.WORK_PATH }}
+          
+          # 2. 检查磁盘空间 (对应图片 df -hT)
+          df -hT $PWD
+          
+          # 3. 克隆源码到子目录 (对应图片 git clone ... openwrt)
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          
+          # 4. 建立软链接 (对应图片 ln -sf ...)
+          # 将源码目录链接到工作区根目录，方便后续步骤调用
           ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       # 恢复第一阶段保存的工具链缓存
