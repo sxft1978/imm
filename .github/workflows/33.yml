@@ -1,4 +1,4 @@
-name: ImmortalWrt Build_x86_64
+name: ImmortalWrt B86_64
 on:
   workflow_dispatch:
   push:
@@ -103,25 +103,17 @@ jobs:
 # 【关键】完全复刻你图片的目录操作逻辑
       - name: Clone Source Code (Strict Path)
         run: |
-# 1. 确保父目录存在并进入
           mkdir -p ${{ env.WORK_PATH }}
           cd ${{ env.WORK_PATH }}
-
-# 2. 检查磁盘空间 (对应图片 df -hT)
           df -hT $PWD
-
-# 3. 克隆源码到子目录 (对应图片 git clone ... openwrt)
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-
-# 4. 建立软链接 (对应图片 ln -sf ...)
-# 将源码目录链接到工作区根目录，方便后续步骤调用
           ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
 # 恢复之前的编译缓存 (dl, feeds, staging_dir)
       - name: Restore Cache
         uses: actions/cache@v4
         with:
-          path: |
+        path: |
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
@@ -131,7 +123,7 @@ jobs:
 
 # 执行 P1 脚本 (Feeds 更新等)
       - name: Load Custom Feeds & Update
-          working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
           [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $GITHUB_WORKSPACE/feeds.conf.default feeds.conf.default
           ./scripts/feeds update -a
@@ -139,12 +131,11 @@ jobs:
 
 # 【核心】只编译工具链
       - name: Compile Toolchain Only
-          working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
-# 加载你的配置文件
-          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
+         [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
 
-# 执行 make toolchain/install
+
           make -j$(nproc) toolchain/install
 
 # 强制保存工具链缓存
@@ -152,7 +143,7 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: |
+        path: |
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
@@ -260,7 +251,7 @@ jobs:
       - name: Restore Toolchain Cache
         uses: actions/cache@v4
         with:
-          path: |
+        path: |
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
           ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
