@@ -137,7 +137,7 @@ jobs:
       - name: Load Custom Feeds & Update
         run: |
           pwd
-          [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+          [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
           cd openwrt
           cat -A feeds.conf.default
           $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -146,12 +146,12 @@ jobs:
 
       # 【核心】只编译工具链
       - name: Compile Toolchain Only
-        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
           ls $GITHUB_WORKSPACE
           pwd
           # 加载你的配置文件
-          [ -e $GITHUB_WORKSPACE/.config ] && cp $CONFIG_FILE .config
+          [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+          cd openwrt
           echo -e "$(nproc) thread compile"
           cat -A ./.config
           # make -j$(nproc) || make -j1 || make -j1 V=s
