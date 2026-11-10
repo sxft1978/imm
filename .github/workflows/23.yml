@@ -145,7 +145,8 @@ jobs:
         run: |
           pwd
           # 加载你的配置文件
-          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config          
+          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
+          make defconfig
           make -j1 toolchain/install
 
       # 强制保存工具链缓存
