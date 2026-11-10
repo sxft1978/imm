@@ -7,7 +7,7 @@ on:
 
 env:
   env:
-  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
