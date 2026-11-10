@@ -1,29 +1,30 @@
-          name: ImmortalWrt Build_x86_64
-          workflow_dispatch:
-          push:
-          branches: [ main ]
+name: ImmortalWrt Build_x86_64
+on:
+  workflow_dispatch:
+  push:
+  branches: [ main ]
 
-        env:
-          REPO_URL: https://github.com/immortalwrt/immortalwrt.git
-          REPO_BRANCH: openwrt-24.10
-          WORK_PATH: /home/runner/work/openwrt/openwrt/
-          SOURCE_DIR: openwrt
-          CONFIG_FILE: config/imm_config/X86.config
-          FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
-          DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh 
-          DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
-          RELEASE_TAG: immortalwrt-X86
-          UPLOAD_BIN_DIR: false
-          UPLOAD_FIRMWARE: true
-          UPLOAD_ARTIFACT: true
-          UPLOAD_RELEASE: true
-          TZ: Asia/Shanghai
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: openwrt-24.10
+  WORK_PATH: /home/runner/work/openwrt/openwrt/
+  SOURCE_DIR: openwrt
+  CONFIG_FILE: config/imm_config/X86.config
+  FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
+  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
+  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
+  RELEASE_TAG: immortalwrt-X86
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
 
-          jobs:
+jobs:
 # ==========================================
 # 第一阶段：环境准备 & 编译工具链 (Toolchain)
 # ==========================================
-    build-toolchain:
+  build-toolchain:
     runs-on: ubuntu-22.04
     steps:
       - name: Check Server Performance
@@ -51,7 +52,7 @@
           ghc* \
           google-cloud-sdk \
           azure-cli \
-          powershell \
+          powershell \`
           dotnet* \
           swift* \
           || true
