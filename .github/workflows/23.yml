@@ -6,12 +6,21 @@ on:
     branches: [ main ]
 
 env:
+  env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: openwrt-24.10
-  # 这里严格对应你图片中的 working-directory
   WORK_PATH: /home/runner/work/openwrt/openwrt/
-  # 对应你图片中 clone 出来的子目录名
   SOURCE_DIR: openwrt
+  CONFIG_FILE: config/imm_config/X86.config
+  FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
+  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
+  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
+  RELEASE_TAG: immortalwrt-X86
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
 
 jobs:
   # ==========================================
