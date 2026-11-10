@@ -1,4 +1,5 @@
-name: ImmortalWrt Build_x86_64
+name: ImmortalWrt Build (Strict Dir Structure)
+
 on:
   workflow_dispatch:
   push:
@@ -7,25 +8,17 @@ on:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
   REPO_BRANCH: openwrt-24.10
+  # 这里严格对应你图片中的 working-directory
   WORK_PATH: /home/runner/work/openwrt/openwrt/
+  # 对应你图片中 clone 出来的子目录名
   SOURCE_DIR: openwrt
-  CONFIG_FILE: config/imm_config/X86.config
-  FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
-  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
-  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
-  RELEASE_TAG: immortalwrt-X86
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_ARTIFACT: true
-  UPLOAD_RELEASE: true
-  TZ: Asia/Shanghai
 
 jobs:
-# ==========================================
-# 第一阶段：环境准备 & 编译工具链 (Toolchain)
-# ==========================================
+  # ==========================================
+  # 第一阶段：环境准备 & 编译工具链 (Toolchain)
+  # ==========================================
   build-toolchain:
-    runs-on: ubuntu-last
+    runs-on: ubuntu-22.04
     steps:
       - name: Check Server Performance
         run: |
@@ -106,68 +99,71 @@ jobs:
           sudo timedatectl set-timezone "$TZ"
           df -hT $PWD
           pwd
-          ls 
+          ls
 
-# 【关键】完全复刻你图片的目录操作逻辑
+      # 【关键】完全复刻你图片的目录操作逻辑
       - name: Clone Source Code (Strict Path)
         run: |
-# 1. 确保父目录存在并进入
+          # 1. 确保父目录存在并进入
           mkdir -p ${{ env.WORK_PATH }}
           cd ${{ env.WORK_PATH }}
-
-# 2. 检查磁盘空间 (对应图片 df -hT)
+          
+          # 2. 检查磁盘空间 (对应图片 df -hT)
           df -hT $PWD
-
-# 3. 克隆源码到子目录 (对应图片 git clone ... openwrt)
+          
+          # 3. 克隆源码到子目录 (对应图片 git clone ... openwrt)
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          
+          # 4. 建立软链接 (对应图片 ln -sf ...)
+          # 将源码目录链接到工作区根目录，方便后续步骤调用
           ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
-# 恢复之前的编译缓存 (dl, feeds, staging_dir)
+      # 恢复之前的编译缓存 (dl, feeds, staging_dir)
       - name: Restore Cache
         uses: actions/cache@v4
         with:
           path: |
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('**/feeds.conf.default') }}
           restore-keys: |
-          immortalwrt-toolchain-${{ runner.os }}-
+            immortalwrt-toolchain-${{ runner.os }}-
 
-# 执行 P1 脚本 (Feeds 更新等)
+      # 执行 P1 脚本 (Feeds 更新等)
       - name: Load Custom Feeds & Update
-          working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
           [ -e $GITHUB_WORKSPACE/feeds.conf.default ] && cp $GITHUB_WORKSPACE/feeds.conf.default feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-# 【核心】只编译工具链
+      # 【核心】只编译工具链
       - name: Compile Toolchain Only
-          working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
-# 加载你的配置文件
+          # 加载你的配置文件
           [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
-
-# 执行 make toolchain/install
+          
+          # 执行 make toolchain/install
           make -j$(nproc) toolchain/install
 
-# 强制保存工具链缓存
+      # 强制保存工具链缓存
       - name: Save Toolchain Cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('**/feeds.conf.default') }}-${{ github.run_id }}
 
-# ==========================================
-# 第二阶段：编译完整固件 (Target)
-# ==========================================
-          build-firmware:
-          needs: build-toolchain
+  # ==========================================
+  # 第二阶段：编译完整固件 (Target)
+  # ==========================================
+  build-firmware:
+    needs: build-toolchain
     runs-on: ubuntu-22.04
     steps:
       - name: Check Server Performance
@@ -189,14 +185,13 @@ jobs:
           echo ">>> 1. 卸载 Azure 扩展分区，释放隐藏空间..."
           sudo umount /mnt || true
           sudo rm -rf /mnt/* || true
-
           echo ">>> 2. 彻底卸载巨无霸软件 (Mono, Haskell, etc.)..."
           sudo apt-get purge -y \
           mono-complete \
           ghc* \
           google-cloud-sdk \
           azure-cli \
-          powershell \
+          powershell \`
           dotnet* \
           swift* \
           || true
@@ -207,7 +202,6 @@ jobs:
           sudo rm -rf /usr/share/swift || true
           sudo rm -rf /usr/share/dotnet || true
           sudo rm -rf /opt/hostedtoolcache || true
-
           echo ">>> 4. 清理 Docker 镜像和缓存..."
           docker system prune -af --volumes || true
 
@@ -222,10 +216,10 @@ jobs:
 
       - name: Create Massive Swap Space
         run: |
-          echo ">>> 正在创建 16GB Swap 虚拟内存..."
+          echo ">>> 正在创建 6GB Swap 虚拟内存..."
           sudo swapoff -a || true
           sudo rm -f /swapfile
-          sudo fallocate -l 16G /swapfile
+          sudo fallocate -l 6G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
@@ -244,16 +238,16 @@ jobs:
       - name: Initialization environment
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: |             
+        run: |
           sudo -E apt-get -qq update
           sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/openwrt/raw/main/diy_script/immortalwrt_dependence)
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
           sudo timedatectl set-timezone "$TZ"
           df -hT $PWD
           pwd
-          ls 
+          ls
 
-# 再次执行目录克隆和链接 (因为 Job 之间环境不互通)
+      # 再次执行目录克隆和链接 (因为 Job 之间环境不互通)
       - name: Clone Source Code (Strict Path)
         run: |
           mkdir -p ${{ env.WORK_PATH }}
@@ -261,125 +255,36 @@ jobs:
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
           ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
-# 恢复第一阶段保存的工具链缓存
+      # 恢复第一阶段保存的工具链缓存
       - name: Restore Toolchain Cache
         uses: actions/cache@v4
         with:
           path: |
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-          ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('**/feeds.conf.default') }}-${{ github.run_id }}
           restore-keys: |
-          immortalwrt-toolchain-${{ runner.os }}-
+            immortalwrt-toolchain-${{ runner.os }}-
 
-# 执行 P2 脚本 (自定义配置等)
+      # 执行 P2 脚本 (自定义配置等)
       - name: Load Custom Configuration
-          working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
           [ -e $GITHUB_WORKSPACE/files ] && mv $GITHUB_WORKSPACE/files files
           [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
-          [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-          chmod +x $DIY_P2_SH
-          cd openwrt        
-          $GITHUB_WORKSPACE/$DIY_P2_SH 
-          df -hT
+          # 如果有 diy-part2.sh，在这里执行
+          # bash $GITHUB_WORKSPACE/diy-part2.sh
 
-      - name: Get architecture
-          working-directory: ${{ github.workspace }}/openwrt
+      # 编译完整固件
+      - name: Compile Firmware
+        working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
-          TARGET_DEVICE_ARCH="$(grep "^CONFIG_TARGET_.*=y$" ".config" | head -n 1 | sed 's/^CONFIG_TARGET_//g' | sed 's/=y//g'| awk -F '_' '{print $1}')"
-          echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
-          echo "MIXKEY=X86_64" >>$GITHUB_ENV
+          make -j$(nproc) || make -j1 V=s
 
-      - name: cache
-        uses: stupidloud/cachewrtbuild@main
+      # 上传固件
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
         with:
-          ccache: 'true'
-          mixkey: ${{ env.MIXKEY }}
-          skip: 'true'
-          toolchain: 'true'
-          clean: 'false'
-          prefix: ${{ github.workspace }}/openwrt
-
-      - name: Download package
-          id: package
-        run: |
-          cd openwrt
-          make defconfig
-          make download -j8
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
-          df -hT $PWD
-
-      - name: Compile the firmware
-          id: compile
-        run: |
-          cd openwrt
-          echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 || make -j1 V=s
-          echo "status=success" >> $GITHUB_OUTPUT
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-      - name: Check space usage
-        if: (!cancelled())
-        run: df -hT
-
-      - name: Upload bin directory
-        uses: actions/upload-artifact@main
-        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-        with:
-          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: openwrt/bin
-
-      - name: Organize files
-          id: organize
-        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-        run: |
-          cd openwrt/bin/targets/*/*
-          rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
-
-      - name: Upload firmware directory
-        uses: actions/upload-artifact@main
-        if: steps.organize.outputs.status == 'success' && !cancelled()
-        with:
-          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-          path: ${{ env.FIRMWARE }}
-
-      - name: Generate release tag
-          id: tag
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-        run: |
-          echo "release_tag=$RELEASE_TAG-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-          touch release.txt
-          [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
-          echo "status=success" >> $GITHUB_OUTPUT
-
-      - name: Upload firmware to release
-        uses: ncipollo/release-action@v1.14.0
-        if: steps.tag.outputs.status == 'success' && !cancelled()
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag: ${{ steps.tag.outputs.release_tag }}
-          bodyFile: "release.txt"
-          artifacts: ${{ env.FIRMWARE }}/*
-
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@main
-        with:
-          retain_days: 0
-          keep_minimum_runs: 2
-
-      - name: Remove old Releases
-        uses: dev-drprasad/delete-older-releases@master
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-        with:
-          keep_latest: 3
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: ImmortalWrt-Firmware
+          path: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/bin/targets/
