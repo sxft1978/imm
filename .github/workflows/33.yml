@@ -1,4 +1,4 @@
-name: ImmortalWrt Build_x86_64
+name: Imm_Build_x86_64
 on:
   workflow_dispatch:
   push:
