@@ -1,4 +1,4 @@
-name: Imm_Build_x86_64
+name: ImmortalWrt x86_64
 on:
   workflow_dispatch:
   push:
@@ -106,7 +106,7 @@ jobs:
           sudo timedatectl set-timezone "$TZ"
           df -hT $PWD
           pwd
-          ls 
+          ls
 
 # 【关键】完全复刻你图片的目录操作逻辑
       - name: Clone Source Code (Strict Path)
@@ -254,7 +254,7 @@ jobs:
           sudo timedatectl set-timezone "$TZ"
           df -hT $PWD
           pwd
-          ls 
+          ls
 
 # 再次执行目录克隆和链接 (因为 Job 之间环境不互通)
       - name: Clone Source Code (Strict Path)
@@ -284,8 +284,8 @@ jobs:
           [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P2_SH
-          cd openwrt        
-          $GITHUB_WORKSPACE/$DIY_P2_SH 
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
           df -hT
 
       - name: Get architecture
