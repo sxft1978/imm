@@ -143,10 +143,9 @@ jobs:
       - name: Compile Toolchain Only
         working-directory: ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
         run: |
+          pwd
           # 加载你的配置文件
-          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/.config .config
-          
-          # 执行 make toolchain/install
+          [ -e $GITHUB_WORKSPACE/.config ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config          
           make -j1 toolchain/install
 
       # 强制保存工具链缓存
@@ -241,7 +240,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo -E apt-get -qq update
-          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/openwrt/raw/main/diy_script/immortalwrt_dependence)
+          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
           sudo timedatectl set-timezone "$TZ"
           df -hT $PWD
@@ -276,8 +275,9 @@ jobs:
 
       - name: Load custom configuration
         run: |
+          pwd
           [ -e files ] && mv files openwrt/files
-          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          [ -e $CONFIG_FILE ] && mv $GITHUB_WORKSPACE/$CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
           cd openwrt        
           $GITHUB_WORKSPACE/$DIY_P2_SH 
