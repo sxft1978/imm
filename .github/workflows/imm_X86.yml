@@ -1,10 +1,12 @@
-name: ImmortalWrt Build (Two-Stage with Toolchain Cache)
+name: ImmortalWrt_xiaoyi
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
+  # 优化点7: 增加定时自动编译（每天凌晨2点）
+  schedule:
+    - cron: '0 2 * * *'
 
 permissions:
   contents: write
@@ -14,6 +16,7 @@ permissions:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
+  # 优化点1: 源码直接克隆到 GITHUB_WORKSPACE 下，不再使用软链接
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/X86.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
@@ -27,12 +30,48 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
-  # ============================================
+  # ==========================================
   # 第一阶段: 环境准备 & 编译工具链 (Toolchain)
-  # ============================================
+  # ==========================================
   build-toolchain:
     runs-on: ubuntu-22.04
     steps:
+      - name: Check Server Performance
+        run: |
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          echo "--------------------------硬盘信息--------------------------"
+          df -hT
+
+      - name: Maximize Build Space (Native Hardcore Clean)
+        run: |
+          sudo umount /mnt || true
+          sudo rm -rf /mnt/* || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/lib/jvm || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
+          echo ">>清理完成！当前磁盘状态："
+          df -h /
+
+      - name: Create Massive Swap Space
+        run: |
+          echo ">>正在创建 6GB Swap 虚拟内存..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo ">>Swap 创建成功！"
+          free -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -44,31 +83,32 @@ jobs:
           sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
           sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
 
-      # 源码直接克隆到 $GITHUB_WORKSPACE/openwrt（修复点1: 去掉软链接）
+      # 优化点1: 源码直接克隆到 $GITHUB_WORKSPACE/openwrt
       - name: Clone Source Code
         run: |
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          df -hT $PWD
 
-      # 覆盖自定义 feeds（必须在计算缓存 key 之前完成）
-      - name: Load Custom Feeds
+      # 优化点2: 覆盖自定义 feeds 必须在计算缓存 key 之前完成
+      - name: Load Custom Feeds (before cache key)
         run: |
-          cp $FEEDS_CONF ${{ env.SOURCE_DIR }}/feeds.conf.default
+           && cp $FEEDS_CONF ${{ env.SOURCE_DIR }}/feeds.conf.default
 
-      # 生成 .config（修复点2: key 依赖 .config 哈希）
-      - name: Prepare Config
+      # 优化点2: 生成 .config 并计算缓存 key（包含 feeds.conf.default 和 .config 的哈希）
+      - name: Prepare Config for Cache Key
         run: |
-          cp $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
+           && cp $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
           cd ${{ env.SOURCE_DIR }}
           make defconfig
 
-      # 缓存 key = feeds.conf.default + .config 的哈希（修复点2）
       - name: Compute Cache Key
         id: cache_key
         run: |
-          echo "key=immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') }}" >> $GITHUB_OUTPUT
+          echo "key=immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') }}" >$GITHUB_OUTPUT
 
-      # 只缓存 toolchain 目录，不缓存整个 staging_dir（修复点4）
+      # 优化点3: 去掉 restore-keys 前缀匹配，只用精确 key
       - name: Restore Toolchain Cache
         id: restore_cache
         uses: actions/cache/restore@v4
@@ -85,16 +125,17 @@ jobs:
       - name: Install feeds
         run: cd ${{ env.SOURCE_DIR }} && ./scripts/feeds install -a
 
-      # 只有缓存未命中时才编译工具链（修复点5）
+      # 优化点5: 只有缓存未命中时才编译工具链
       - name: Compile Toolchain Only
         if: steps.restore_cache.outputs.cache-hit != 'true'
         run: |
           cd ${{ env.SOURCE_DIR }}
           export TARGET_CFLAGS="-fno-stack-protector -U_FORTIFY_SOURCE"
           export TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+          echo -e "$(nproc) thread compile"
           make -j1 V=s toolchain/install
 
-      # 只有未命中且编译成功时才保存缓存（修复点5）
+      # 优化点5: 只有未命中且编译成功时才保存缓存
       - name: Save Toolchain Cache
         if: steps.restore_cache.outputs.cache-hit != 'true' && success()
         uses: actions/cache/save@v4
@@ -105,13 +146,65 @@ jobs:
             ${{ env.SOURCE_DIR }}/.ccache
           key: ${{ steps.cache_key.outputs.key }}
 
-  # ============================================
+  # ==========================================
   # 第二阶段: 编译完整固件 (Target)
-  # ============================================
+  # ==========================================
   build-firmware:
     needs: build-toolchain
     runs-on: ubuntu-22.04
+    # 优化点8: 多机型并行构建（matrix）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: X86.config
+            release_tag: immortalwrt-X86
+            device_name: X86_64
+          - config: R2S.config
+            release_tag: immortalwrt-R2S
+            device_name: R2S
+          - config: R4S.config
+            release_tag: immortalwrt-R4S
+            device_name: R4S
+    env:
+      CONFIG_FILE: ${{ matrix.config }}
+      RELEASE_TAG: ${{ matrix.release_tag }}
+      DEVICE_NAME: ${{ matrix.device_name }}
     steps:
+      - name: Check Server Performance
+        run: |
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          df -hT
+
+      - name: Maximize Build Space (Native Hardcore Clean)
+        run: |
+          sudo umount /mnt || true
+          sudo rm -rf /mnt/* || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/lib/jvm || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
+          echo ">>清理完成！当前磁盘状态："
+          df -h /
+
+      - name: Create Massive Swap Space
+        run: |
+          echo ">>正在创建 6GB Swap 虚拟内存..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -123,28 +216,29 @@ jobs:
           sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
           sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
 
       - name: Clone Source Code
         run: |
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          df -hT $PWD
 
-      - name: Load Custom Feeds
+      - name: Load Custom Feeds (before cache key)
         run: |
-          cp $FEEDS_CONF ${{ env.SOURCE_DIR }}/feeds.conf.default
+           && cp $FEEDS_CONF ${{ env.SOURCE_DIR }}/feeds.conf.default
 
-      # 与第一阶段完全相同的 key 计算逻辑
-      - name: Prepare Config
+      - name: Prepare Config for Cache Key
         run: |
-          cp $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
+           && cp $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
           cd ${{ env.SOURCE_DIR }}
           make defconfig
 
       - name: Compute Cache Key
         id: cache_key
         run: |
-          echo "key=immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') }}" >> $GITHUB_OUTPUT
+          echo "key=immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') }}" >$GITHUB_OUTPUT
 
-      # 恢复第一阶段保存的工具链缓存（修复点3: 去掉 restore-keys）
+      # 优化点3: 只用精确 key 恢复缓存
       - name: Restore Toolchain Cache
         id: restore_cache
         uses: actions/cache/restore@v4
@@ -155,18 +249,18 @@ jobs:
             ${{ env.SOURCE_DIR }}/.ccache
           key: ${{ steps.cache_key.outputs.key }}
 
-      # 验证缓存是否可用（修复点6）
+      # 优化点6: 恢复缓存后验证工具链是否完整可用
       - name: Validate Toolchain Cache
         if: steps.restore_cache.outputs.cache-hit == 'true'
         run: |
-          if [ ! -d "${{ env.SOURCE_DIR }}/staging_dir/toolchain-*" ]; then
-            echo ">>> 缓存损坏，删除并重新编译工具链"
+          if ; then
+            echo ">>缓存损坏，删除并重新编译工具链"
             rm -rf ${{ env.SOURCE_DIR }}/staging_dir/toolchain-*
             rm -rf ${{ env.SOURCE_DIR }}/.ccache
-            echo "cache_valid=false" >> $GITHUB_ENV
+            echo "cache_valid=false" >$GITHUB_ENV
           else
-            echo ">>> 工具链缓存有效"
-            echo "cache_valid=true" >> $GITHUB_ENV
+            echo ">>工具链缓存有效"
+            echo "cache_valid=true" >$GITHUB_ENV
           fi
 
       - name: Update feeds
@@ -177,11 +271,19 @@ jobs:
 
       - name: Load custom configuration
         run: |
-          mv files ${{ env.SOURCE_DIR }}/files
-          mv $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
+           && mv files ${{ env.SOURCE_DIR }}/files
+           && mv $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
           chmod +x $DIY_P2_SH
           cd ${{ env.SOURCE_DIR }}
           $GITHUB_WORKSPACE/$DIY_P2_SH
+          df -hT
+
+      - name: Get architecture
+        working-directory: ${{ github.workspace }}/openwrt
+        run: |
+          TARGET_DEVICE_ARCH="$(grep "^CONFIG_TARGET_.*=y$" ".config" | head -n 1 | sed 's/^CONFIG_TARGET_//g' | sed 's/=y//g' | awk -F '_' '{print $1}')"
+          echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
+          echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
       - name: Download package
         id: package
@@ -189,9 +291,11 @@ jobs:
           cd ${{ env.SOURCE_DIR }}
           make defconfig
           make download -j8
+          find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
+          df -hT $PWD
 
-      # 缓存无效时重新编译工具链（修复点6）
+      # 优化点6: 缓存无效时重新编译工具链
       - name: Compile Toolchain (if cache invalid)
         if: env.cache_valid == 'false'
         run: |
@@ -200,17 +304,42 @@ jobs:
           export TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
           make -j1 V=s toolchain/install
 
+      # 优化点9: 编译失败自动重试机制（最多重试2次）
       - name: Compile the firmware
         id: compile
         run: |
           cd ${{ env.SOURCE_DIR }}
           export TARGET_CFLAGS="-fno-stack-protector -U_FORTIFY_SOURCE"
           export TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
-          make -j$(nproc) || make -j1 || make -j1 V=s
-          echo "status=success" >> $GITHUB_OUTPUT
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo -e "$(nproc) thread compile"
+          # 记录开始时间
+          echo "COMPILE_START=$(date +%s)" >$GITHUB_ENV
+          # 第一次尝试
+          make -j$(nproc) || {
+            echo ">>> 第一次编译失败，清理后重试..."
+            make clean
+            make -j1 || {
+              echo ">>第二次编译失败，最后一次尝试..."
+              make -j1 V=s
+            }
+          }
+          echo "status=success" >$GITHUB_OUTPUT
+          # 记录结束时间
+          echo "COMPILE_END=$(date +%s)" >$GITHUB_ENV
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' DEVICE_NAME
+           && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
+
+      - name: Upload bin directory
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+        with:
+          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ env.SOURCE_DIR }}/bin
 
       - name: Organize files
         id: organize
@@ -218,7 +347,7 @@ jobs:
         run: |
           cd ${{ env.SOURCE_DIR }}/bin/targets/*/*
           rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "FIRMWARE=$PWD" >$GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Upload firmware directory
@@ -232,9 +361,9 @@ jobs:
         id: tag
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
         run: |
-          echo "release_tag=$RELEASE_TAG-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          echo "release_tag=$RELEASE_TAG-$(date +"%Y.%m.%d-%H%M")" >$GITHUB_OUTPUT
           touch release.txt
-          echo "status=success" >> $GITHUB_OUTPUT
+          echo "status=success" >$GITHUB_OUTPUT
 
       - name: Upload firmware to release
         uses: ncipollo/release-action@v1.14.0
@@ -246,17 +375,36 @@ jobs:
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
 
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v0.1.0
+      # 优化点11: 编译时间统计和通知
+      - name: Compile Time Statistics
+        if: always()
+        run: |
+          if  && ; then
+            DURATION=$((COMPILE_END - COMPILE_START))
+            echo ">>编译耗时: $((DURATION / 60)) 分 $((DURATION % 60)) 秒"
+            echo "COMPILE_DURATION=$DURATION" >$GITHUB_ENV
+          fi
+
+      - name: Send Notification
+        if: always()
+        uses: actions/github-script@v7
         with:
-          retain_days: 0
-          keep_minimum_runs: 2
+          script: |
+            const status = context.payload.workflow_run?.conclusion || 'completed';
+            const duration = process.env.COMPILE_DURATION || 'unknown';
+            const message = `## ImmortalWrt 编译结果\n\n- **状态**: ${status}\n- **机型**: ${{ matrix.device_name }}\n- **编译耗时**: ${duration} 秒\n- **工作流**: ${context.workflow}\n- **运行ID**: ${context.runId}`;
+            // 这里可以接入 Telegram/钉钉/邮件等通知渠道
+            console.log(message);
+
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        retain_days: 0
+        keep_minimum_runs: 2
 
       - name: Remove old Releases
-        uses: dev-drprasad/delete-older-releases@v0.3.3
-        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-        with:
-          keep_latest: 3
-          delete_tags: true
+        run: |
+            gh release list --limit 100 | tail -n +4 | awk '{print $1}' | xargs -I{} gh release delete {} --yes
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
