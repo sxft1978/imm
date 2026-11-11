@@ -1,8 +1,8 @@
 name: ImmortalWrt_Build_qianwen
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+  #push:
+    #branches: [ main ]
 
 # 修复点1: 删除了原文件多余的一行 "env:"，现在 env 下直接是变量
 permissions:
