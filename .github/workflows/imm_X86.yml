@@ -100,8 +100,8 @@ jobs:
       - name: Prepare Config for Cache Key
         run: |
            && cp $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
-          cd ${{ env.SOURCE_DIR }}
-          make defconfig
+            cd ${{ env.SOURCE_DIR }}
+             make defconfig
 
       - name: Compute Cache Key
         id: cache_key
