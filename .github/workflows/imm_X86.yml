@@ -1,5 +1,4 @@
-name: ImmortalWrt Build (Strict Dir Structure)
-
+name: ImmortalWrt_xiaoyi
 on:
   workflow_dispatch:
   push:
