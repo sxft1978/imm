@@ -1,14 +1,14 @@
-name: ImmortalWrt_xiaoyi
+name: ImmortalWrt Build (Strict Dir Structure)
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
 
-# permissions:
-#  contents: write
-#  actions: write
-#  packages: write
+#permissions:
+  #contents: write
+  #actions: write
+  #packages: write
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
@@ -100,7 +100,7 @@ jobs:
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default') }}
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
 
@@ -128,7 +128,7 @@ jobs:
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default') }}
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
 
   # ============================================================
   # 第二阶段: 编译完整固件 (Target)
@@ -202,7 +202,7 @@ jobs:
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('openwrt/feeds.conf.default') }}
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
 
@@ -296,4 +296,17 @@ jobs:
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
 
-      
+      - name: Delete workflow runs
+        uses: Mattraks/delete-workflow-runs@v0.1.0
+        with:
+          retain_days: 0
+          keep_minimum_runs: 2
+
+      - name: Remove old Releases
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 3
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
