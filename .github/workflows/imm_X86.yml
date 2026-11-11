@@ -230,8 +230,8 @@ jobs:
       - name: Prepare Config for Cache Key
         run: |
            && cp $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
-          cd ${{ env.SOURCE_DIR }}
-          make defconfig
+           cd ${{ env.SOURCE_DIR }}
+            make defconfig
 
       - name: Compute Cache Key
         id: cache_key
@@ -273,10 +273,10 @@ jobs:
         run: |
            && mv files ${{ env.SOURCE_DIR }}/files
            && mv $CONFIG_FILE ${{ env.SOURCE_DIR }}/.config
-          chmod +x $DIY_P2_SH
-          cd ${{ env.SOURCE_DIR }}
-          $GITHUB_WORKSPACE/$DIY_P2_SH
-          df -hT
+           chmod +x $DIY_P2_SH
+           cd ${{ env.SOURCE_DIR }}
+           $GITHUB_WORKSPACE/$DIY_P2_SH
+           df -hT
 
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
@@ -305,7 +305,7 @@ jobs:
           make -j1 V=s toolchain/install
 
       # 优化点9: 编译失败自动重试机制（最多重试2次）
-      - name: Compile the firmware
+      - name: Compile the firmware 
         id: compile
         run: |
           cd ${{ env.SOURCE_DIR }}
