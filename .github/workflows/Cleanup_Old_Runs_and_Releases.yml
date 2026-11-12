@@ -1,0 +1,56 @@
+name: Cleanup Old Runs and Releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_runs:
+        description: "保留最近多少条工作流运行记录"
+        required: false
+        default: "10"
+        type: string
+      keep_releases:
+        description: "保留最近多少个 Release"
+        required: false
+        default: "3"
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Cleanup old workflow runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_RUNS: ${{ inputs.keep_runs || '10' }}
+        run: |
+          TOTAL=$(gh run list --limit 1 --json databaseId --jq 'length')
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "No workflow runs found."
+            exit 0
+          fi
+
+          gh run list --limit 200 --json databaseId \
+            --jq '.[].databaseId' \
+            | tail -n +"$(( KEEP_RUNS + 1 ))" \
+            | xargs -r -I {} gh run delete {}
+
+      - name: Cleanup old releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP_RELEASES: ${{ inputs.keep_releases || '3' }}
+        run: |
+          TOTAL=$(gh release list --limit 1 --json name --jq 'length')
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "No releases found."
+            exit 0
+          fi
+
+          gh release list --limit 200 --json name \
+            --jq '.[].name' \
+            | tail -n +"$(( KEEP_RELEASES + 1 ))" \
+            | xargs -r -I {} gh release delete {} -y
