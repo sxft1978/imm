@@ -103,9 +103,10 @@ jobs:
       - name: Clone Source Code (Strict Path)
         working-directory: $GITHUB_WORKSPACE
         run: |
+          mkdir -p openwrt
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+         
 
       # 注意: 必须在 Restore Cache 之前覆盖 feeds.conf.default，
       # 这样下面的 hashFiles 算出的 key 才能反映真实生效的 feeds 配置 [改动2]
