@@ -135,7 +135,7 @@ jobs:
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
 
@@ -206,7 +206,7 @@ jobs:
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
 
   # ============================================================
   # 第二阶段: 编译完整固件 (Target + Packages + GRUB2)
@@ -287,7 +287,7 @@ jobs:
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
             ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
 
