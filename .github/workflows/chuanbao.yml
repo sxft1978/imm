@@ -127,7 +127,7 @@ jobs:
           cd openwrt
           #$GITHUB_WORKSPACE/$DIY_P2_SH
           #df -hT
-          yes ""| make deconfig
+          make defconfig
 
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
