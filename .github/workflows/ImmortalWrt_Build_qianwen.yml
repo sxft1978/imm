@@ -101,9 +101,9 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
+        working-directory: $GITHUB_WORKSPACE
         run: |
-          $PWD
-          mkdir -p openwrt
+          mkdir -p ${{ env.SOURCE_DIR }}
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
          
@@ -263,8 +263,9 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
+        working-directory: $GITHUB_WORKSPACE
         run: |
-          mkdir -p openwrt
+          mkdir -p ${{ env.SOURCE_DIR }}
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
           
