@@ -105,7 +105,7 @@ jobs:
           $PWD
           mkdir -p openwrt
           df -hT $PWD
-          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
          
 
       # 注意: 必须在 Restore Cache 之前覆盖 feeds.conf.default，
@@ -266,7 +266,7 @@ jobs:
         run: |
           mkdir -p openwrt
           df -hT $PWD
-          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
           
       - name: Load Custom Feeds (before cache key)
         run: |
