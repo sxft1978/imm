@@ -378,6 +378,10 @@ jobs:
           echo ">>> 编译 grub2-bios-setup（legacy 启动用，未勾选则自动跳过）:"
           make package/grub2-bios-setup/compile -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
             || make package/grub2-bios-setup/compile -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+      
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
       # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
@@ -398,24 +402,6 @@ jobs:
           path: ${{ github.workspace }}/openwrt/compile.log
           retention-days: 7
           if-no-files-found: warn
-      - name: Compile the firmware
-        id: compile
-        run: |
-          cd openwrt
-          echo -e "$(nproc) thread compile"
-          # [改动7] 同样命令行传参，确保全量编译（含内核模块、所有 App）统一吃到
-          # 抗 fortify 选项，GRUB2 之外的包若再冒出同类报错也一并免疫
-          make -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
-            || make -j1 TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
-            || make -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
-          echo "status=success" >> $GITHUB_OUTPUT
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-      - name: Check space usage
-        if: (!cancelled())
-        run: df -hT
 
       - name: Upload bin directory
         uses: actions/upload-artifact@v4
