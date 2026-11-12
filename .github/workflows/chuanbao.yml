@@ -57,23 +57,7 @@ jobs:
           echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
           df -hT
 
-      - name: Maximize Build Space (Native Hardcore Clean)
-        run: |
-          sudo umount /mnt || true
-          sudo rm -rf /mnt/* || true
-          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /usr/lib/jvm || true
-          sudo rm -rf /usr/share/swift || true
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/hostedtoolcache || true
-          docker system prune -af --volumes || true
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo rm -rf /tmp/*
-          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
-          echo ">>> 清理完成！当前磁盘状态："
-          df -h /
+      
 
       - name: Create Massive Swap Space
         run: |
@@ -136,15 +120,15 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
-      - name: Download package
-        id: package
-        run: |
-          cd openwrt
-          make defconfig
-          make download -j8
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
-          df -hT $PWD
+       #- name: Download package
+       # id: package
+       # run: |
+          #cd openwrt
+          #make defconfig
+          #make download -j8
+          #find dl -size -1024c -exec ls -l {} \;
+          #find dl -size -1024c -exec rm -f {} \;
+          #df -hT $PWD
 
       
       
