@@ -96,11 +96,11 @@ jobs:
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
 
       - name: Update feeds
-        run: cd openwrt && ./scripts/feeds update -a
+       run: cd openwrt && ./scripts/feeds update -a
 
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
-
+      
       - name: Load custom configuration
         run: |
           # [ -e files ] && mv files openwrt/files
@@ -126,7 +126,13 @@ jobs:
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
           df -hT $PWD
-          
+
+           
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
+        
+      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -136,5 +142,31 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
-      
-      
+
+      # [改动] 编译失败时上传编译日志
+      - name: Upload tail log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-tail-${{ github.run_id }}
+          path: /tmp/imm-build.log
+          retention-days: 3
+          
+      - name: Upload IMM build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-error-${{ github.run_id }}
+          path: |
+            logs/error.txt
+            logs/compile.txt
+          retention-days: 3
+          
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-compile-log
+          path: ${{ github.workspace }}/openwrt/compile.log
+          retention-days: 7
+          if-no-files-found: warn
