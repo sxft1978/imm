@@ -263,12 +263,11 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        working-directory: $GITHUB_WORKSPACE
         run: |
+          mkdir -p openwrt
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
-
+          
       - name: Load Custom Feeds (before cache key)
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
