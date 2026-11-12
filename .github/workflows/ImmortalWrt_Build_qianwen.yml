@@ -31,7 +31,7 @@ env:
   REPO_BRANCH: openwrt-24.10
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
-  CONFIG_FILE: config/imm_config/86_64.config
+  CONFIG_FILE: X86.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
   DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
   DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
@@ -392,27 +392,7 @@ jobs:
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-          
-      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
-      - name: Upload DL folder to Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-dl
-          path: ${{ github.workspace }}/openwrt/dl
-          retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6
 
-      # [改动] 编译失败时上传编译日志
-      - name: Upload compile log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-compile-log
-          path: ${{ github.workspace }}/openwrt/compile.log
-          retention-days: 7
-          if-no-files-found: war
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
@@ -458,5 +438,18 @@ jobs:
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
 
-              env:
+      - name: 删除旧的 Release（保留最近 3 个）
+        uses: naveen5211/delete-older-releases@v0.0.0
+        with:
+          keep_latest: 3
+          delete_tag_pattern: 'dl-backup-'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 删除旧的 Workflow 运行记录（保留最近 10 次）
+        uses: dsaltares/github-actions-delete-workflow-runs@v2
+        with:
+          retain_days: 0
+          keep_minimum_runs: 5
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
