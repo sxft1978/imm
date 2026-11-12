@@ -124,7 +124,7 @@ jobs:
           # [ -e files ] && mv files openwrt/files
           #[ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           # chmod +x $DIY_P2_SH
-          #cd openwrt
+          cd openwrt
           #$GITHUB_WORKSPACE/$DIY_P2_SH
           #df -hT
           make deconfig
