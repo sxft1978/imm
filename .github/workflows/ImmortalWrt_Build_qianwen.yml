@@ -15,6 +15,7 @@ name: ImmortalWrt_xiaoyi_严谨版
 #           顽固包稳定吃到 -U_FORTIFY_SOURCE（grub2 的 fortify 报错就是这么绕开的）
 #   [改动8] 新增独立 GRUB2 编译步骤（详见注释），失败即停，不产出带残破 grub 的固件
 #   [改动9] 工具链编译改先 -j$(nproc) 提速，失败自动降级 -j1 V=s 打详细日志定位
+#CONFIG_FILE: config/imm_ config/86_64.config
 # ============================================================
 on:
   workflow_dispatch:
@@ -31,7 +32,7 @@ env:
   REPO_BRANCH: openwrt-24.10
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
-  CONFIG_FILE: X86.config
+  CONFIG_FILE: config/imm_ config/86_64.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
   DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
   DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
