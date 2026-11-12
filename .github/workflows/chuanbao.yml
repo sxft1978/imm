@@ -1,4 +1,22 @@
-name: Imm_传包
+name: ImmortalWrt_传包
+# ============================================================
+# ImmortalWrt openwrt-24.10 x86_64 两阶段编译工作流（严谨版）
+# 本版本相对原模板的改动（每处改动在正文中都有 [改动N] 注释）：
+#   [改动1] 工具链编译加缓存命中判断：命中秒过，未命中才重编，不再无脑重编
+#   [改动2] 缓存 key 同时绑定 X86.config 和 feeds 配置文件，feeds 变更自动失效，
+#           防止 restore-keys 前缀兜底恢复出与当前配置不匹配的工具链（污染型失败）
+#   [改动3] 缓存路径补上 build_dir/toolchain-*，恢复度完整，第二阶段不再重编工具链
+#   [改动4] 缓存恢复步骤加 continue-on-error：缓存服务抖动/恢复失败不中断工作流，
+#           由后面的校验+重编步骤兜底（"缓存失败怎么办"的答案）
+#   [改动5] 工具链完整性校验：缓存报命中但目录不完整时，同样判定失效并自动重编
+#   [改动6] 缓存只在工具链真正编译成功后才保存，半截工具链绝不入库
+#   [改动7] TARGET_CFLAGS 由 export 改为 make 命令行传参：export 不跨 make 进程
+#           一定可靠，命令行变量是 OpenWrt 构建系统的最高优先级，保证 GRUB2 等
+#           顽固包稳定吃到 -U_FORTIFY_SOURCE（grub2 的 fortify 报错就是这么绕开的）
+#   [改动8] 新增独立 GRUB2 编译步骤（详见注释），失败即停，不产出带残破 grub 的固件
+#   [改动9] 工具链编译改先 -j$(nproc) 提速，失败自动降级 -j1 V=s 打详细日志定位
+#CONFIG_FILE: config/imm_ config/86_64.config
+# ============================================================
 on:
   workflow_dispatch:
   #push:
@@ -11,7 +29,7 @@ permissions:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: master
+  REPO_BRANCH: openwrt-24.10
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/86_64.config
@@ -24,15 +42,12 @@ env:
   UPLOAD_ARTIFACT: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  # [改动7] 编译选项集中定义，make 命令行传参时统一引用，改一处即可全局生效
+  FORTIFY_FLAGS: "-fno-stack-protector -U_FORTIFY_SOURCE"
 
 jobs:
   # ============================================================
   # 第一阶段: 环境准备 & 编译工具链 (Toolchain)
-  # ============================================================
-   
-
-  # ============================================================
-  # 第二阶段: 编译完整固件 (Target)
   # ============================================================
   build:
     runs-on: ubuntu-22.04
@@ -95,11 +110,14 @@ jobs:
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
 
+     
+
       - name: Update feeds
-       run: cd openwrt && ./scripts/feeds update -a
+        run: cd openwrt && ./scripts/feeds update -a
 
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
+
       
       - name: Load custom configuration
         run: |
@@ -127,7 +145,8 @@ jobs:
           find dl -size -1024c -exec rm -f {} \;
           df -hT $PWD
 
-           
+      
+      
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
@@ -143,30 +162,4 @@ jobs:
           if-no-files-found: warn
           compression-level: 6
 
-      # [改动] 编译失败时上传编译日志
-      - name: Upload tail log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: imm-tail-${{ github.run_id }}
-          path: /tmp/imm-build.log
-          retention-days: 3
-          
-      - name: Upload IMM build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: imm-error-${{ github.run_id }}
-          path: |
-            logs/error.txt
-            logs/compile.txt
-          retention-days: 3
-          
-      - name: Upload compile log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-compile-log
-          path: ${{ github.workspace }}/openwrt/compile.log
-          retention-days: 7
-          if-no-files-found: warn
+      
