@@ -354,34 +354,25 @@ jobs:
           find dl -size -1024c -exec rm -f {} \;
           df -hT $PWD
 
-      # ------------------------------------------------------------
-      # [改动8] 独立编译 GRUB2（用户指定重点）：
-      #   - x86_64 的 EFI 与 legacy 镜像都依赖 grub2 系列包；grub2 正是之前
-      #     fortify/stack-protector 报错的重灾区，单独一步有两个好处：
-      #       1) 出问题直接定位在 GRUB2 步骤，不用从几万行全量日志里翻；
-      #       2) 它失败就立即停，不会继续往下产出一个"刷进去不开机"的固件。
-      #   - 前提: X86.config 里必须勾选对应选项（EFI 固件至少需要
-      #     CONFIG_PACKAGE_grub2=y、CONFIG_PACKAGE_grub2-efi=y、
-      #     CONFIG_PACKAGE_grub2-bios-setup=y 中目标镜像实际需要的项）；
-      #     未勾选时对应 make 目标会无事发生直接通过，不会报错。
-      #   - 编译选项同样走命令行传参（[改动7]），稳定绕开 fortify 报错。
-      #   - 失败降级 -j1 V=s 打出完整报错，方便定位而不是静默跳过。
-      # ------------------------------------------------------------
-      - name: Compile GRUB2 (x86 boot loader, fail fast)
+      - name: Compile the firmware
+        id: compile
         run: |
           cd openwrt
-          echo ">>> 检查 X86.config 中 GRUB2 相关选项:"
-          grep -E '^CONFIG_PACKAGE_grub2' .config || echo ">>> 警告: .config 未发现任何 CONFIG_PACKAGE_grub2 选项，grub2 可能未勾选，x86 镜像可能无法启动"
-          echo ">>> 编译 grub2 主包:"
-          make package/grub2/compile -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
-            || make package/grub2/compile -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
-          echo ">>> 编译 grub2-bios-setup（legacy 启动用，未勾选则自动跳过）:"
-          make package/grub2-bios-setup/compile -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
-            || make package/grub2-bios-setup/compile -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+          echo -e "$(nproc) thread compile"
+          # [改动7] 同样命令行传参，确保全量编译（含内核模块、所有 App）统一吃到
+          # 抗 fortify 选项，GRUB2 之外的包若再冒出同类报错也一并免疫
+          make -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
       
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
+        
       # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
