@@ -101,11 +101,12 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        working-directory: $GITHUB_WORKSPACE
+        working-directory: ${{ env.WORK_PATH }}
         run: |
           mkdir -p ${{ env.SOURCE_DIR }}
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
          
 
       # 注意: 必须在 Restore Cache 之前覆盖 feeds.conf.default，
@@ -263,11 +264,12 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        working-directory: $GITHUB_WORKSPACE
+        working-directory: ${{ env.WORK_PATH }}
         run: |
           mkdir -p ${{ env.SOURCE_DIR }}
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
           
       - name: Load Custom Feeds (before cache key)
         run: |
