@@ -105,7 +105,7 @@ jobs:
         run: |
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       # 注意: 必须在 Restore Cache 之前覆盖 feeds.conf.default，
       # 这样下面的 hashFiles 算出的 key 才能反映真实生效的 feeds 配置 [改动2]
@@ -266,7 +266,7 @@ jobs:
         run: |
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       - name: Load Custom Feeds (before cache key)
         run: |
@@ -393,27 +393,6 @@ jobs:
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-       # [改动] 编译完成后始终上传 DL 目录，方便后续复用
-      - name: Upload DL folder to Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-dl
-          path: ${{ github.workspace }}/openwrt/dl
-          retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6
-
-      # [改动] 编译失败时上传编译日志
-      - name: Upload compile log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-compile-log
-          path: ${{ github.workspace }}/openwrt/compile.log
-          retention-days: 7
-          if-no-files-found: warn    
-
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
@@ -459,7 +438,4 @@ jobs:
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
 
-      
-          keep_minimum_runs: 5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     
