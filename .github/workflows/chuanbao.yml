@@ -24,7 +24,6 @@ env:
   UPLOAD_ARTIFACT: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  # [改动7] 编译选项集中定义，make 命令行传参时统一引用，改一处即可全局生效
   FORTIFY_FLAGS: "-fno-stack-protector -U_FORTIFY_SOURCE"
 
 jobs:
@@ -119,10 +118,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-x86-dl
-          path: ${{ github.workspace }}/openwrt
+          path: ${{ github.workspace }}/openwrt/dl
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
+
+      # ============================================
+      # 第二阶段: 打包并上传整个 openwrt 目录到 Release
+      # ============================================
+      - name: Package openwrt folder
+        run: |
+          echo "正在打包 openwrt 整个目录..."
+          tar -czvf openwrt.tar.gz openwrt/
 
       - name: Create and push tag
         run: |
@@ -140,13 +147,12 @@ jobs:
           git push origin "$TAG"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: Create Release and upload dl
+      - name: Create Release and upload openwrt package
         if: env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          files: |
-            openwrt/**
+          files: openwrt.tar.gz
           draft: false
           prerelease: false
           generate_release_notes: true
