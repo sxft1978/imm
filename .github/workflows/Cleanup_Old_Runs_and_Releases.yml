@@ -21,19 +21,13 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-
     steps:
       - name: Cleanup old workflow runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           KEEP_RUNS: ${{ inputs.keep_runs || '10' }}
         run: |
-          TOTAL=$(gh run list --limit 1 --json databaseId --jq 'length')
-          if [ "$TOTAL" -eq 0 ]; then
-            echo "No workflow runs found."
-            exit 0
-          fi
-
           gh run list --limit 200 --json databaseId \
             --jq '.[].databaseId' \
             | tail -n +"$(( KEEP_RUNS + 1 ))" \
@@ -42,14 +36,9 @@ jobs:
       - name: Cleanup old releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           KEEP_RELEASES: ${{ inputs.keep_releases || '3' }}
         run: |
-          TOTAL=$(gh release list --limit 1 --json name --jq 'length')
-          if [ "$TOTAL" -eq 0 ]; then
-            echo "No releases found."
-            exit 0
-          fi
-
           gh release list --limit 200 --json name \
             --jq '.[].name' \
             | tail -n +"$(( KEEP_RELEASES + 1 ))" \
