@@ -95,17 +95,6 @@ jobs:
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
 
-      - name: Restore Toolchain Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
-          restore-keys: |
-            immortalwrt-toolchain-${{ runner.os }}-
-
       - name: Update feeds
         run: cd openwrt && ./scripts/feeds update -a
 
