@@ -101,8 +101,8 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        working-directory: $GITHUB_WORKSPACE
         run: |
+          $PWD
           mkdir -p openwrt
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
