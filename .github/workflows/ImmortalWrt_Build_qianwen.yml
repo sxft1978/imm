@@ -377,7 +377,26 @@ jobs:
           echo ">>> 编译 grub2-bios-setup（legacy 启动用，未勾选则自动跳过）:"
           make package/grub2-bios-setup/compile -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
             || make package/grub2-bios-setup/compile -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
+      - name: Upload DL folder to Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-dl
+          path: ${{ github.workspace }}/openwrt/dl
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
 
+      # [改动] 编译失败时上传编译日志
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-compile-log
+          path: ${{ github.workspace }}/openwrt/compile.log
+          retention-days: 7
+          if-no-files-found: warn
       - name: Compile the firmware
         id: compile
         run: |
