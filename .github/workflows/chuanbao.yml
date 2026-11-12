@@ -39,8 +39,6 @@ jobs:
           echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
           df -hT
 
-      
-
       - name: Create Massive Swap Space
         run: |
           echo ">>> 正在创建 6GB Swap 虚拟内存..."
@@ -54,6 +52,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Initialization environment
         env:
@@ -76,15 +76,12 @@ jobs:
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
 
-     
-
       - name: Update feeds
         run: cd openwrt && ./scripts/feeds update -a
 
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
 
-      
       - name: Load custom configuration
         run: |
           # [ -e files ] && mv files openwrt/files
@@ -112,12 +109,10 @@ jobs:
           #find dl -size -1024c -exec rm -f {} \;
           #df -hT $PWD
 
-      
-      
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
-        
+
       # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
@@ -129,4 +124,29 @@ jobs:
           if-no-files-found: warn
           compression-level: 6
 
-      
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${RELEASE_TAG}-$(date +%Y%m%d)"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            i=1
+            while git rev-parse "${TAG}-${i}" >/dev/null 2>&1; do
+              i=$((i + 1))
+            done
+            TAG="${TAG}-${i}"
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Create Release and upload dl
+        if: env.UPLOAD_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            openwrt/**
+          draft: false
+          prerelease: false
+          generate_release_notes: true
