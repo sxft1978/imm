@@ -1,0 +1,40 @@
+name: 失败自动重试（ImmortalWrt）
+
+on:
+  workflow_run:
+    workflows: ["ImmortalWrt_Build_qianwen.yml"]  # 直接锁定你的主工作流文件名
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  retry-on-failure:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检查重试次数（防止无限循环）
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 统计当前运行记录，限制最多重试 2 次
+          RUN_ATTEMPT=${{ github.event.workflow_run.run_attempt || 1 }}
+          if [ $RUN_ATTEMPT -ge 3 ]; then
+            echo "MAX_RETRY=true" >> $GITHUB_OUTPUT
+            echo "已经重试 2 次，停止触发，避免无限循环。"
+          else
+            echo "MAX_RETRY=false" >> $GITHUB_OUTPUT
+            echo "当前为第 ${RUN_ATTEMPT} 次尝试，准备自动重试..."
+          fi
+
+      - name: 触发失败重试（自动缓存加速）
+        if: steps.check.outputs.MAX_RETRY == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run rerun ${{ github.event.workflow_run.id }} \
+            --failed \
+            --repo ${{ github.repository }}
+          echo "已自动触发失败任务重跑，利用缓存省时防超时。"
