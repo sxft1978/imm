@@ -31,7 +31,7 @@ env:
   REPO_BRANCH: openwrt-24.10
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
-  CONFIG_FILE: config/imm_config/86_64.config
+  CONFIG_FILE: X86.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
   DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
   DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
@@ -103,11 +103,9 @@ jobs:
       - name: Clone Source Code (Strict Path)
         working-directory: ${{ env.WORK_PATH }}
         run: |
-          mkdir -p ${{ env.SOURCE_DIR }}
           df -hT $PWD
-          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
-          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
-         
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
 
       # 注意: 必须在 Restore Cache 之前覆盖 feeds.conf.default，
       # 这样下面的 hashFiles 算出的 key 才能反映真实生效的 feeds 配置 [改动2]
@@ -132,10 +130,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/dl
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/staging_dir
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/.ccache
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
@@ -158,8 +156,8 @@ jobs:
         if: steps.cache-toolchain.outputs.cache-hit == 'true'
         run: |
           ok=false
-          STAGING_DIR=$(ls -d $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
-          BUILD_DIR=$(ls -d $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          STAGING_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          BUILD_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
           if [ -n "$STAGING_DIR" ] && [ -n "$BUILD_DIR" ] && [ -n "$(ls -A "$STAGING_DIR" 2>/dev/null)" ]; then
             ok=true
             echo ">>> 缓存工具链校验通过: $STAGING_DIR"
@@ -203,10 +201,10 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/dl
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/staging_dir
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/.ccache
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
 
   # ============================================================
@@ -266,11 +264,10 @@ jobs:
       - name: Clone Source Code (Strict Path)
         working-directory: ${{ env.WORK_PATH }}
         run: |
-          mkdir -p ${{ env.SOURCE_DIR }}
           df -hT $PWD
-          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}
-          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
-          
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}
+
       - name: Load Custom Feeds (before cache key)
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
@@ -285,10 +282,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/dl
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/staging_dir
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
-            $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/.ccache
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
@@ -298,8 +295,8 @@ jobs:
         if: steps.cache-toolchain.outputs.cache-hit == 'true'
         run: |
           ok=false
-          STAGING_DIR=$(ls -d $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
-          BUILD_DIR=$(ls -d $GITHUB_WORKSPACE/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          STAGING_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          BUILD_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
           if [ -n "$STAGING_DIR" ] && [ -n "$BUILD_DIR" ] && [ -n "$(ls -A "$STAGING_DIR" 2>/dev/null)" ]; then
             ok=true
             echo ">>> 缓存工具链校验通过: $STAGING_DIR"
@@ -396,7 +393,7 @@ jobs:
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
+       # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -416,7 +413,6 @@ jobs:
           path: ${{ github.workspace }}/openwrt/compile.log
           retention-days: 7
           if-no-files-found: warn    
-
 
       - name: Check space usage
         if: (!cancelled())
@@ -463,7 +459,6 @@ jobs:
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
 
-
       - name: 删除旧的 Release（保留最近 3 个）
         uses: naveen5211/delete-older-releases@v0.0.0
         with:
@@ -479,4 +474,3 @@ jobs:
           keep_minimum_runs: 5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
