@@ -1,4 +1,4 @@
-name: ImmortalWrt_xiaoyi_严谨版
+name: ImmortalWrt_qianwen_严谨版
 # ============================================================
 # ImmortalWrt openwrt-24.10 x86_64 两阶段编译工作流（严谨版）
 # 本版本相对原模板的改动（每处改动在正文中都有 [改动N] 注释）：
@@ -385,6 +385,24 @@ jobs:
           compression-level: 6
 
       # [改动] 编译失败时上传编译日志
+      - name: Upload tail log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-tail-${{ github.run_id }}
+          path: /tmp/imm-build.log
+          retention-days: 3
+          
+      - name: Upload IMM build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-error-${{ github.run_id }}
+          path: |
+            logs/error.txt
+            logs/compile.txt
+          retention-days: 3
+          
       - name: Upload compile log on failure
         if: failure()
         uses: actions/upload-artifact@v4
