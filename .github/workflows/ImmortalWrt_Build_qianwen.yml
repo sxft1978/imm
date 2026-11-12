@@ -438,18 +438,4 @@ jobs:
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
 
-      - name: 删除旧的 Release（保留最近 3 个）
-        uses: naveen5211/delete-older-releases@v0.0.0
-        with:
-          keep_latest: 3
-          delete_tag_pattern: 'dl-backup-'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 删除旧的 Workflow 运行记录（保留最近 10 次）
-        uses: dsaltares/github-actions-delete-workflow-runs@v2
-        with:
-          retain_days: 0
-          keep_minimum_runs: 5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
