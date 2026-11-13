@@ -11,7 +11,7 @@ permissions:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-26.04
+  REPO_BRANCH: openwrt-24.10
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/86_64.config
@@ -31,7 +31,7 @@ jobs:
   # 第一阶段: 环境准备 & 编译工具链 (Toolchain)
   # ============================================================
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check Server Performance
         run: |
