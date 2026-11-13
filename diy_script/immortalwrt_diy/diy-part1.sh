@@ -1,6 +1,3 @@
-
-
- 
 # 1. 拼接绝对路径（系统根目录 + yml传过来的变量）
 SOURCE_FILE="${GITHUB_WORKSPACE}/${FEEDS_CONF}"
 TARGET_FILE="feeds.conf.default"
