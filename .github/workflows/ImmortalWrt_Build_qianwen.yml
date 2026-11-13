@@ -50,7 +50,7 @@ jobs:
   # 第一阶段: 环境准备 & 编译工具链 (Toolchain)
   # ============================================================
   build-toolchain:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Check Server Performance
         run: |
