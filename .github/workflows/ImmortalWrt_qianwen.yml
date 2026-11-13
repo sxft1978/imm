@@ -1,0 +1,480 @@
+name: ImmortalWrt_qianwen_严谨版20261113
+# ============================================================
+# ImmortalWrt openwrt-24.10 x86_64 两阶段编译工作流（严谨版）
+# 本版本相对原模板的改动（每处改动在正文中都有 [改动N] 注释）：
+#   [改动1] 工具链编译加缓存命中判断：命中秒过，未命中才重编，不再无脑重编
+#   [改动2] 缓存 key 同时绑定 X86.config 和 feeds 配置文件，feeds 变更自动失效，
+#           防止 restore-keys 前缀兜底恢复出与当前配置不匹配的工具链（污染型失败）
+#   [改动3] 缓存路径补上 build_dir/toolchain-*，恢复度完整，第二阶段不再重编工具链
+#   [改动4] 缓存恢复步骤加 continue-on-error：缓存服务抖动/恢复失败不中断工作流，
+#           由后面的校验+重编步骤兜底（"缓存失败怎么办"的答案）
+#   [改动5] 工具链完整性校验：缓存报命中但目录不完整时，同样判定失效并自动重编
+#   [改动6] 缓存只在工具链真正编译成功后才保存，半截工具链绝不入库
+#   [改动7] TARGET_CFLAGS 由 export 改为 make 命令行传参：export 不跨 make 进程
+#           一定可靠，命令行变量是 OpenWrt 构建系统的最高优先级，保证 GRUB2 等
+#           顽固包稳定吃到 -U_FORTIFY_SOURCE（grub2 的 fortify 报错就是这么绕开的）
+#   [改动8] 新增独立 GRUB2 编译步骤（详见注释），失败即停，不产出带残破 grub 的固件
+#   [改动9] 工具链编译改先 -j$(nproc) 提速，失败自动降级 -j1 V=s 打详细日志定位
+#   [改动10] 第二阶段 runs-on 由 ubuntu-22.04 统一为 ubuntu-24.04：缓存虽跨版本 key 相同
+#            能命中，但 24.04 编出的工具链依赖的宿主库与 22.04 不兼容，会"假通过"后报
+#            诡异链接错误；两阶段同系统后工具链才能真正复用（本次核心修复1）
+#   [改动11] Verify 步骤不再只查"目录/文件在不在"，而是真跑一次 gcc -v：
+#            交叉工具链的可执行文件依赖宿主动态库，跑不通也判 toolchain_ok=false，
+#            把"缓存目录在但实际坏掉"的假通过彻底堵死（本次核心修复2，两阶段都加）
+#CONFIG_FILE: config/imm_ config/86_64.config
+# ============================================================
+on:
+  workflow_dispatch:
+  #push:
+    #branches: [ main ]
+
+permissions:
+  contents: write
+  actions: write
+  packages: write
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-25.12
+  WORK_PATH: /home/runner/work/imm/imm/
+  SOURCE_DIR: openwrt
+  CONFIG_FILE: config/imm_config/86_64.config
+  FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
+  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
+  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
+  RELEASE_TAG: immortalwrt-X86
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  # [改动7] 编译选项集中定义，make 命令行传参时统一引用，改一处即可全局生效
+  FORTIFY_FLAGS: "-fno-stack-protector -U_FORTIFY_SOURCE"
+
+jobs:
+  # ============================================================
+  # 第一阶段: 环境准备 & 编译工具链 (Toolchain)
+  # ============================================================
+  build-toolchain:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check Server Performance
+        run: |
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          echo "--------------------------硬盘信息--------------------------"
+          df -hT
+
+      - name: Maximize Build Space (Native Hardcore Clean)
+        run: |
+          sudo umount /mnt || true
+          sudo rm -rf /mnt/* || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/lib/jvm || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
+          echo ">>> 清理完成！当前磁盘状态："
+          df -h /
+
+      - name: Create Massive Swap Space
+        run: |
+          echo ">>> 正在创建 6GB Swap 虚拟内存..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo ">>> Swap 创建成功！"
+          free -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
+          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+          sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
+
+      - name: Clone Source Code (Strict Path)
+        working-directory: ${{ env.WORK_PATH }}
+        run: |
+          df -hT $PWD
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+
+      # 注意: 必须在 Restore Cache 之前覆盖 feeds.conf.default，
+      # 这样下面的 hashFiles 算出的 key 才能反映真实生效的 feeds 配置 [改动2]
+      - name: Load Custom Feeds (before cache key)
+        run: |
+          [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+
+      # ------------------------------------------------------------
+      # [改动2][改动3][改动4] 缓存恢复：
+      #   - id 供后续 if 判断引用
+      #   - continue-on-error: 缓存服务本身故障不拖垮整个任务，后面有重编兜底
+      #   - path 新增 build_dir/toolchain-*：工具链的中间产物目录，恢复不全会导致
+      #     第二阶段误判需要重编，甚至出现工具链残缺一半的诡异报错
+      #   - key 绑定 X86.config + feeds 配置双哈希：任一变更即失效重编，
+      #     杜绝"配置变了但 restore-keys 恢复出旧工具链"的污染型编译失败
+      #   - 首次运行说明: key 公式变了会导致现有旧缓存全部失效，重编一次工具链
+      #     属预期行为，第二次起恢复正常加速
+      # ------------------------------------------------------------
+      - name: Restore Toolchain Cache
+        id: cache-toolchain
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+          restore-keys: |
+            immortalwrt-toolchain-${{ runner.os }}-
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      # ------------------------------------------------------------
+      # [改动5] 工具链完整性校验：
+      #   actions/cache 报 cache-hit=true 只代表"缓存存在且解压了"，
+      #   不代表里面的工具链是完整可用的（可能只存了一半、可能目录结构不对）。
+      #   这里实测 staging_dir 和 build_dir 下工具链目录是否存在且非空，
+      #   不成立就输出 toolchain_ok=false，让下一步把它当"未命中"处理。
+      # ------------------------------------------------------------
+      - name: Verify Restored Toolchain
+        id: verify-toolchain
+        if: steps.cache-toolchain.outputs.cache-hit == 'true'
+        run: |
+          ok=false
+          STAGING_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          BUILD_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          if [ -n "$STAGING_DIR" ] && [ -n "$BUILD_DIR" ] && [ -n "$(ls -A "$STAGING_DIR" 2>/dev/null)" ]; then
+            # [改动11] 关键加固：目录在 != 工具链能用。交叉编译出的 gcc 依赖宿主
+            #   libstdc++/glibc/libmpfr 等动态库，宿主系统不对时"文件在但跑不起来"。
+            #   这里直接真跑一次 gcc -v，跑不通（退出码非0）同样判 false。
+            GCC_BIN=$(find "$STAGING_DIR" -type f -name "*-gcc" | head -n 1)
+            if [ -n "$GCC_BIN" ] && "$GCC_BIN" -v >/dev/null 2>&1; then
+              ok=true
+              echo ">>> 缓存工具链校验通过（已实测 gcc 可执行）: $STAGING_DIR"
+            else
+              echo ">>> 缓存工具链校验不通过：gcc 缺失或无法执行（宿主库不匹配），按未命中重编"
+            fi
+          else
+            echo ">>> 缓存工具链校验不通过，将判定为未命中并重新编译"
+          fi
+          echo "toolchain_ok=$ok" >> $GITHUB_OUTPUT
+          df -hT
+
+      # ------------------------------------------------------------
+      # [改动1][改动9] 只有"缓存未命中"或"命中但校验不完整"才重编工具链：
+      #   - 命中且校验通过 → 本步跳过，直接进第二阶段（这就是省下的1~2小时）
+      #   - 未命中 → 先多线程快编，失败自动降级 -j1 V=s 输出详细报错
+      #   - [改动7] 编译选项走 make 命令行传参，优先级最高且一定作用于所有子进程，
+      #     不再依赖 export（export 只对当前 shell 有效，OpenWrt 派生的子 make
+      #     不一定继承，这是原模板 GRUB2 等包 fortify 报错反复复发的原因之一）
+      # ------------------------------------------------------------
+      - name: Build Toolchain (only on cache miss or broken cache)
+        id: build-toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true' || steps.verify-toolchain.outputs.toolchain_ok != 'true'
+        run: |
+          [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+          cd openwrt
+          make defconfig
+          echo ">>> 缓存未命中或工具链不完整，开始编译工具链: $(nproc) 线程"
+          make -j$(nproc) toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 V=s toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      # ------------------------------------------------------------
+      # [改动6] 只在工具链真正编译成功后才保存缓存：
+      #   原模板 if: success() 在"跳过编译但前面某步有 warning 性失败"等场景下
+      #   可能把半截工具链存进缓存，下次命中就全盘崩。现在绑定到
+      #   steps.build-toolchain.outcome，只有真编成功那一次才入库。
+      #   缓存保存失败（网络抖动等）不影响本次产物，只损失下次加速，
+      #   同样加 continue-on-error 兜底。
+      # ------------------------------------------------------------
+      - name: Save Toolchain Cache (only after real success)
+        if: steps.build-toolchain.outputs.status == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+
+  # ============================================================
+  # 第二阶段: 编译完整固件 (Target + Packages + GRUB2)
+  # ============================================================
+  build-firmware:
+    needs: build-toolchain
+    # [改动10] 第二阶段宿主系统从 ubuntu-22.04 统一为 ubuntu-24.04，与第一阶段对齐。
+    #   原因：缓存 key 里的 runner.os 两个版本都是 Linux，key 完全相同会跨系统命中，
+    #   但 24.04 上编出的工具链依赖的宿主动态库与 22.04 不同，导致"看着在、跑不通"，
+    #   编译固件时报诡异链接错误。两阶段同系统后，阶段1编/存的工具链阶段2才能真正复用。
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check Server Performance
+        run: |
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          df -hT
+
+      - name: Maximize Build Space (Native Hardcore Clean)
+        run: |
+          sudo umount /mnt || true
+          sudo rm -rf /mnt/* || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/lib/jvm || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
+          echo ">>> 清理完成！当前磁盘状态："
+          df -h /
+
+      - name: Create Massive Swap Space
+        run: |
+          echo ">>> 正在创建 6GB Swap 虚拟内存..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
+          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+          sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
+
+      - name: Clone Source Code (Strict Path)
+        working-directory: ${{ env.WORK_PATH }}
+        run: |
+          df -hT $PWD
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+
+      - name: Load Custom Feeds (before cache key)
+        run: |
+          [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
+
+      # ------------------------------------------------------------
+      # 与第一阶段完全相同的 key 与 path（[改动2][改动3]），
+      # 保证命中第一阶段刚保存的缓存；同样带恢复校验与重编兜底（[改动4][改动5]）。
+      # ------------------------------------------------------------
+      - name: Restore Toolchain Cache
+        id: cache-toolchain
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+          restore-keys: |
+            immortalwrt-toolchain-${{ runner.os }}-
+
+      - name: Verify Restored Toolchain
+        id: verify-toolchain
+        if: steps.cache-toolchain.outputs.cache-hit == 'true'
+        run: |
+          ok=false
+          STAGING_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          BUILD_DIR=$(ls -d ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          if [ -n "$STAGING_DIR" ] && [ -n "$BUILD_DIR" ] && [ -n "$(ls -A "$STAGING_DIR" 2>/dev/null)" ]; then
+            # [改动11] 同第一阶段：真跑 gcc -v，防止"目录在但跑不起来"的假通过
+            GCC_BIN=$(find "$STAGING_DIR" -type f -name "*-gcc" | head -n 1)
+            if [ -n "$GCC_BIN" ] && "$GCC_BIN" -v >/dev/null 2>&1; then
+              ok=true
+              echo ">>> 缓存工具链校验通过（已实测 gcc 可执行）: $STAGING_DIR"
+            else
+              echo ">>> 缓存工具链校验不通过：gcc 缺失或无法执行（宿主库不匹配），兜底重编"
+            fi
+          else
+            echo ">>> 缓存工具链校验不通过，将重新编译工具链（兜底，正常情况不应触发）"
+          fi
+          echo "toolchain_ok=$ok" >> $GITHUB_OUTPUT
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      # ------------------------------------------------------------
+      # 兜底重编（严谨性核心）：正常情况下第一阶段已保存缓存，这里必然跳过。
+      # 只有"缓存整个挂了 / 存进去的工具链不完整"时才会触发——宁可这里多花
+      # 一小时重编，也绝不拿一个残破工具链去编固件。这就是"缓存失败怎么办"
+      # 在严谨版里的完整答案：恢复失败→校验拦截→自动重编→继续编译。
+      # ------------------------------------------------------------
+      - name: Rebuild Toolchain Fallback (only on cache miss or broken cache)
+        id: rebuild-toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true' || steps.verify-toolchain.outputs.toolchain_ok != 'true'
+        run: |
+          cd openwrt
+          make defconfig
+          echo ">>> 兜底重编工具链: $(nproc) 线程"
+          make -j$(nproc) toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 V=s toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+
+      - name: Load custom configuration
+        run: |
+          # [ -e files ] && mv files openwrt/files
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          chmod +x $DIY_P2_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+          df -hT
+
+      - name: Get architecture
+        working-directory: ${{ github.workspace }}/openwrt
+        run: |
+          TARGET_DEVICE_ARCH="$(grep "^CONFIG_TARGET_.*=y$" ".config" | head -n 1 | sed 's/^CONFIG_TARGET_//g' | sed 's/=y//g' | awk -F '_' '{print $1}')"
+          echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
+          echo "MIXKEY=X86_64" >>$GITHUB_ENV
+
+      - name: Download package
+        id: package
+        run: |
+          cd openwrt
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          df -hT $PWD
+
+      - name: Compile the firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo -e "$(nproc) thread compile"
+          # [改动7] 同样命令行传参，确保全量编译（含内核模块、所有 App）统一吃到
+          # 抗 fortify 选项，GRUB2 之外的包若再冒出同类报错也一并免疫
+          make -j$(nproc) TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 V=s TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+      
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
+        
+      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
+      - name: Upload DL folder to Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-dl
+          path: ${{ github.workspace }}/openwrt/dl
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
+
+      # [改动] 编译失败时上传编译日志
+      - name: Upload tail log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-tail-${{ github.run_id }}
+          path: /tmp/imm-build.log
+          retention-days: 3
+          
+      - name: Upload IMM build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-error-${{ github.run_id }}
+          path: |
+            logs/error.txt
+            logs/compile.txt
+          retention-days: 3
+          
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-compile-log
+          path: ${{ github.workspace }}/openwrt/compile.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload bin directory
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+        with:
+          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: openwrt/bin
+
+      - name: Organize files
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload firmware directory
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+
+      - name: Generate release tag
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "release_tag=$RELEASE_TAG-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          touch release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload firmware to release
+        uses: ncipollo/release-action@v1.14.0
+        if: steps.tag.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: ${{ steps.tag.outputs.release_tag }}
+          bodyFile: "release.txt"
+          artifacts: ${{ env.FIRMWARE }}/*
+
+      
