@@ -188,7 +188,7 @@ jobs:
   # 第二阶段：依赖第一阶段，恢复工具链缓存后编译完整固件并发布产物
   build-firmware:
     needs: build-toolchain
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       # 打印磁盘概况，纯信息提示。
       - name: Check Server Performance
