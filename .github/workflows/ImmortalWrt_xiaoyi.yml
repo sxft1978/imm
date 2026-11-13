@@ -82,11 +82,11 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        working-directory: ${{ env.WORK_PATH }}
+        working-directory: ${{ github.workspace }}
         run: |
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+          ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       - name: Load Custom Feeds (before cache key)
         run: |
@@ -96,9 +96,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
@@ -124,9 +124,9 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
 
   # ============================================================
@@ -184,11 +184,11 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        working-directory: ${{ env.WORK_PATH }}
+        working-directory: ${{ github.workspace }}
         run: |
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+          ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       - name: Load Custom Feeds (before cache key)
         run: |
@@ -198,9 +198,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
