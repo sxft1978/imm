@@ -1,4 +1,5 @@
 name: ImmortalWrt_xiaoyi
+
 on:
   workflow_dispatch:
   #push:
@@ -88,22 +89,20 @@ jobs:
       - name: Load Custom Feeds (before cache key)
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
-    
-      
+
       - name: Restore Toolchain Cache
         id: cache-toolchain
         continue-on-error: true
         uses: actions/cache@v4
         with:
-           path: |
-               ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
-               ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
-               ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
-               ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
+          path: |
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
-      
 
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
@@ -150,8 +149,8 @@ jobs:
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
-        
-    # [改动] 编译完成后始终上传 DL 目录，方便后续复用
+
+      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -170,7 +169,7 @@ jobs:
           name: imm-tail-${{ github.run_id }}
           path: /tmp/imm-build.log
           retention-days: 3
-          
+
       - name: Upload IMM build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,7 +179,7 @@ jobs:
             logs/error.txt
             logs/compile.txt
           retention-days: 3
-          
+
       - name: Upload compile log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -189,6 +188,7 @@ jobs:
           path: ${{ github.workspace }}/openwrt/compile.log
           retention-days: 7
           if-no-files-found: warn
+
       - name: Upload bin directory
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
