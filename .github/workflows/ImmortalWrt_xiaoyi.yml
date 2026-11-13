@@ -91,19 +91,20 @@ jobs:
       - name: Load Custom Feeds (before cache key)
         run: |
           [ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
-
+    
       - name: Restore Toolchain Cache
+        id: cache-toolchain
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: |
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('X86.config') }}
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/dl
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ env.WORK_PATH }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
-            immortalwrt-toolchain-${{ runner.os }}-
-
-      - name: Update feeds
+            immortalwrt-toolchain-${{ runner.os }}-: Update feeds
         run: cd openwrt && ./scripts/feeds update -a
 
       - name: Install feeds
