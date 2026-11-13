@@ -149,7 +149,45 @@ jobs:
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
+        
+    # [改动] 编译完成后始终上传 DL 目录，方便后续复用
+      - name: Upload DL folder to Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-dl
+          path: ${{ github.workspace }}/openwrt/dl
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
 
+      # [改动] 编译失败时上传编译日志
+      - name: Upload tail log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-tail-${{ github.run_id }}
+          path: /tmp/imm-build.log
+          retention-days: 3
+          
+      - name: Upload IMM build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-error-${{ github.run_id }}
+          path: |
+            logs/error.txt
+            logs/compile.txt
+          retention-days: 3
+          
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-compile-log
+          path: ${{ github.workspace }}/openwrt/compile.log
+          retention-days: 7
+          if-no-files-found: warn
       - name: Upload bin directory
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
@@ -190,19 +228,3 @@ jobs:
           tag: ${{ steps.tag.outputs.release_tag }}
           bodyFile: "release.txt"
           artifacts: ${{ env.FIRMWARE }}/*
-
-      - name: 删除旧的 Release（保留最近 3 个）
-        uses: naveen5211/delete-older-releases@v0.0.0
-        with:
-          keep_latest: 3
-          delete_tag_pattern: 'dl-backup-'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 删除旧的 Workflow 运行记录（保留最近 10 次）
-        uses: dsaltares/github-actions-delete-workflow-runs@v2
-        with:
-          retain_days: 0
-          keep_minimum_runs: 5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
