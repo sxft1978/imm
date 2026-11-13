@@ -45,7 +45,7 @@ env:
 jobs:
   # 第一阶段：只做环境准备与交叉工具链编译，并把工具链存入缓存供第二阶段复用
   build-toolchain:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       # 打印 CPU/磁盘概况，纯信息提示，便于判断本机算力是否够用。
       - name: Check Server Performance
