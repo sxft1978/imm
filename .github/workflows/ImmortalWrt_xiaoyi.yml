@@ -12,7 +12,7 @@ permissions:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: mastee
+  REPO_BRANCH: master
   # WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/86_64.config
