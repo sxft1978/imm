@@ -137,7 +137,8 @@ jobs:
           $pwd
           cd openwrt
           ls
-          mv dl /tmp/dl_bak && mv .git /tmp/git_bak && tar -czvf ../openwrt.tar.gz . && mv /tmp/dl_bak dl && mv /tmp/git_bak .git
+          tar -czvf ../openwrt.tar.gz
+          #mv dl /tmp/dl_bak && mv .git /tmp/git_bak && tar -czvf ../openwrt.tar.gz && mv /tmp/dl_bak dl && mv /tmp/git_bak .git
 
       - name: Create and push tag
         run: |
