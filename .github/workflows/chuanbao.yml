@@ -65,11 +65,11 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        #working-directory: ${{ github.workspace }}
+        # working-directory: ${{ github.workspace }}
         run: |
           df -hT $PWD
-          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ github.workspace }}/${{ env.SOURCE_DIR }}
+          # ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       - name: Load Custom Feeds (before cache key)
         run: |
