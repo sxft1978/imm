@@ -166,11 +166,11 @@ jobs:
           git push origin "$TAG"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: Create Release and upload openwrt package
-        if: env.UPLOAD_RELEASE == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG }}
+#      - name: Create Release and upload openwrt package
+   #     if: env.UPLOAD_RELEASE == 'true'
+  #      uses: softprops/action-gh-release@v2
+  #      with:
+      #    tag_name: ${{ env.TAG }}
           # [核心修复·备注] 原来这里是 files: openwrt.tar.gz —— 也就是那个**没被分割、
           #   超过 2GB 的原始大包**。所以上面 split 白切了，传的还是超限文件，才报错。
           #   改成只上传分割后的小分片（仓库根目录下的 openwrt-part-*），每片都 < 2GB，
@@ -179,10 +179,17 @@ jobs:
           #     cat openwrt-part-* > openwrt.tar.gz
           #     tar -xzvf openwrt.tar.gz
           #   合并后可校验：sha256sum openwrt.tar.gz
-          files: openwrt-part-*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+      #    files: openwrt-part-*
+        #  draft: false
+        #  prerelease: false
+      #    generate_release_notes: true  
+      - name: Create Release and upload openwrt
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: bin/**      # 👈 改成这样，直接上传整个 bin 目录
+          tag: "immortalwrt-X86-${{ github.run_id }}"
+          name: "ImmortalWrt X86"
+          body: "自动编译的固件包"
 
 # ============================================================
 # [备用模块] 从 Artifact 下载 DL 缓存并验证
