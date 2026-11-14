@@ -134,6 +134,8 @@ jobs:
         run: |
           echo "正在检查并打包 openwrt 目录..."
           ls -la $GITHUB_WORKSPACE/$SOURCE_DIR
+          $pwd
+          cd openwrt
           tar -czvf openwrt-backup.tar.gz --exclude='.git' --exclude='dl'
 
       - name: Create and push tag
