@@ -133,7 +133,7 @@ jobs:
       - name: Package openwrt folder
         run: |
           echo "正在打包 openwrt 整个目录..."
-          tar -czvf openwrt-backuptar.gz -C openwrt --exclude='dl'
+          tar -czvf openwrt-backup.tar.gz -C openwrt --exclude='dl'
 
       - name: Create and push tag
         run: |
