@@ -11,9 +11,9 @@ else
   echo ">>> 警告：package/boot/grub2/Makefile 不存在，跳过 grub2 替换。"
 fi
 
-wget -O package/boot/grub2/Makefile \
-  https://raw.githubusercontent.com/coolsnowwolf/lede/master/package/boot/grub2/Makefile \
-  || { echo ">>> grub2 Makefile 下载失败"; exit 1; }
+#wget -O package/boot/grub2/Makefile \
+ # https://raw.githubusercontent.com/coolsnowwolf/lede/master/package/boot/grub2/Makefile \
+ # || { echo ">>> grub2 Makefile 下载失败"; exit 1; }
 
 echo ">>> grub2 脚本替换完成。"
 
