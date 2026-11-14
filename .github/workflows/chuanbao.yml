@@ -136,7 +136,8 @@ jobs:
           ls -la $GITHUB_WORKSPACE/$SOURCE_DIR
           $pwd
           cd openwrt
-          tar -czvf openwrt-backup.tar.gz --exclude='.git' --exclude='dl'
+          ls
+          tar -czvf ../openwrt-backup.tar.gz --exclude='.git' --exclude='dl'
 
       - name: Create and push tag
         run: |
