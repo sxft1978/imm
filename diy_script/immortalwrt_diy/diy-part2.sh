@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
-# 1. 注入基础依赖包
-inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang"
+#!/bin/bash
 
-# 2. 更新并精准安装 lang 目录下的 golang 和 rust 组件
-./scripts/feeds update lang
-./scripts/feeds install -p lang golang rust
+# 1. 直接往 feeds 配置文件里追加官方 packages 仓库地址
+echo "src-git lang_packages https://github.com/openwrt/packages.git;lang" >> feeds.conf.default
+
+# 2. 更新并精准安装 golang 和 rust 依赖
+./scripts/feeds update lang_packages
+./scripts/feeds install -p lang_packages lang/golang lang/rust
