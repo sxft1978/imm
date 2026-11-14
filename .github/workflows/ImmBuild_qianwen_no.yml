@@ -189,12 +189,12 @@ jobs:
             ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
             ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
-      - name: Build grub2 host only
+      #- name: Build grub2 host only
      # - name: Build grub2 (compile mode to bypass config bug)
-        run: |
-          cd openwrt
-          make CONFIG_PACKAGE_openappid=n \
-          package/boot/grub2/compile V=s阶段：依赖第一阶段，恢复工具链缓存后编译完整固件并发布产物
+        #run: |
+          #cd openwrt
+          #make CONFIG_PACKAGE_openappid=n \
+          #package/boot/grub2/compile V=s阶段：依赖第一阶段，恢复工具链缓存后编译完整固件并发布产物
   build-firmware:
     needs: build-toolchain
     runs-on: ubuntu-22.04
