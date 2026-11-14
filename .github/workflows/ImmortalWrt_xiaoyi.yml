@@ -117,10 +117,10 @@ jobs:
         run: |
           # [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-          #chmod +x $DIY_P1_SH
-          #cd openwrt
-          #${{ github.workspace }}/$DIY_P1_SH
-          #df -hT
+          chmod +x $DIY_P2_SH
+          cd openwrt
+          ${{ github.workspace }}/$DIY_P2_SH
+          df -hT
 
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
