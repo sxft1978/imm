@@ -98,15 +98,15 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
-       #- name: Download package
-       # id: package
-       # run: |
-          #cd openwrt
-          #make defconfig
-          #make download -j8
-          #find dl -size -1024c -exec ls -l {} \;
-          #find dl -size -1024c -exec rm -f {} \;
-          #df -hT $PWD
+       - name: Download package
+         id: package
+         run: |
+          cd openwrt
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          df -hT $PWD
 
       - name: Check space usage
         if: (!cancelled())
@@ -118,7 +118,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-x86-dl
-          path: ${{ github.workspace }}/openwrt
+          path: ${{ github.workspace }}/openwrt/dl
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
@@ -129,7 +129,7 @@ jobs:
       - name: Package openwrt folder
         run: |
           echo "正在打包 openwrt 整个目录..."
-          tar -czvf openwrt.tar.gz openwrt/
+          tar -czvf openwrt-backuptar.gz -C openwrt --exclude='dl'
 
       - name: Create and push tag
         run: |
