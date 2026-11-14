@@ -173,7 +173,7 @@ jobs:
            if [ -d openwrt ]; then
            cd openwrt
            fi
-           make package/boot/grub2/host-compile j1 V=s
+           make package/boot/grub2/compile j1 V=s
   # 第二阶段：依赖第一阶段，恢复工具链缓存后编译完整固件并发布产物
   build-firmware:
     needs: build-toolchain
