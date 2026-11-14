@@ -1,10 +1,7 @@
 name: ImmortalWrt_传包
-# [改动1·备注] 原首行写成了 "ame:"，缺了首字母 n，不是合法的 Actions 字段，这里补回为 "name:"。
-#   若你本地真实文件本来就是 name:（只是复制粘贴掉了首字母），保持你原来的即可，此行可忽略。
+
 on:
   workflow_dispatch:
-  #push:
-    #branches: [ main ]
 
 permissions:
   contents: write
@@ -29,9 +26,6 @@ env:
   FORTIFY_FLAGS: "-fno-stack-protector -U_FORTIFY_SOURCE"
 
 jobs:
-  # ============================================================
-  # 第一阶段: 环境准备 & 编译工具链 (Toolchain)
-  # ============================================================
   build:
     runs-on: ubuntu-26.04
     steps:
@@ -67,15 +61,12 @@ jobs:
           df -hT $PWD
 
       - name: Clone Source Code (Strict Path)
-        # working-directory: ${{ github.workspace }}
         run: |
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ github.workspace }}/${{ env.SOURCE_DIR }}
-          # ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       - name: Load Custom Feeds (before cache key)
         run: |
-          #[ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
           cd openwrt
           ${{ github.workspace }}/$DIY_P1_SH
@@ -89,13 +80,7 @@ jobs:
 
       - name: Load custom configuration
         run: |
-          # [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-          # chmod +x $DIY_P2_SH
-          #cd openwrt
-          #$GITHUB_WORKSPACE/$DIY_P2_SH
-          #df -hT
-          #make defconfig
 
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
@@ -118,7 +103,6 @@ jobs:
         if: (!cancelled())
         run: df -hT
 
-      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
       - name: Upload DL folder to Artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -129,24 +113,16 @@ jobs:
           if-no-files-found: warn
           compression-level: 6
 
-      # ============================================
+      # ============================================================
       # 第二阶段: 打包并上传整个 openwrt 目录到 Release
-      # ============================================
+      # ============================================================
       - name: Package openwrt folder
         run: |
           echo "正在检查并打包 openwrt 目录..."
           ls -la $GITHUB_WORKSPACE/$SOURCE_DIR
           cd openwrt
-          # 先打成一个大包 openwrt.tar.gz（生成在仓库根目录，即 ../）
           tar -czvf ../openwrt.tar.gz .
-          # [改动2·备注] GitHub Release 单个附件上限是 2GB，超过就报
-          #   "Validation Failed ... size must be less than 2147483648"。
-          #   用 split 把大包按每片 600M 切成多个小片，文件名形如：
-          #   openwrt-part-aa、openwrt-part-ab、openwrt-part-ac ...（都在仓库根目录 ../）。
-          #   600M 远小于 2GB，无论原包多大，单片都不会超限；-b 按字节切分，
-          #   对二进制(tar.gz)安全，字母后缀按字典序排列，合并顺序稳定。
           split -b 600M ../openwrt.tar.gz ../openwrt-part-
-          # [新增·调试] 打印切出来的分片，确认每片都在 600M 左右、都 < 2GB
           echo ">>> 分割后的分片列表："
           ls -lh ../openwrt-part-*
 
@@ -166,51 +142,11 @@ jobs:
           git push origin "$TAG"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
-#      - name: Create Release and upload openwrt package
-   #     if: env.UPLOAD_RELEASE == 'true'
-  #      uses: softprops/action-gh-release@v2
-  #      with:
-      #    tag_name: ${{ env.TAG }}
-          # [核心修复·备注] 原来这里是 files: openwrt.tar.gz —— 也就是那个**没被分割、
-          #   超过 2GB 的原始大包**。所以上面 split 白切了，传的还是超限文件，才报错。
-          #   改成只上传分割后的小分片（仓库根目录下的 openwrt-part-*），每片都 < 2GB，
-          #   Release 就能上传成功。
-          #   使用方在本地下载全部同名分片后，按顺序合并还原即可：
-          #     cat openwrt-part-* > openwrt.tar.gz
-          #     tar -xzvf openwrt.tar.gz
-          #   合并后可校验：sha256sum openwrt.tar.gz
-      #    files: openwrt-part-*
-        #  draft: false
-        #  prerelease: false
-      #    generate_release_notes: true  
       - name: Create Release and upload openwrt
         uses: ncipollo/release-action@v1
         with:
-          artifacts: bin/**      # 👈 改成这样，直接上传整个 bin 目录
-          tag: "immortalwrt-X86-${{ github.run_id }}"
+          artifacts: "openwrt-part-*"
+          tag: ${{ env.TAG }}
           name: "ImmortalWrt X86"
           body: "自动编译的固件包"
-
-# ============================================================
-# [备用模块] 从 Artifact 下载 DL 缓存并验证
-# 启用方式：去掉下方所有行开头的 # 号，保持缩进与其他 Step 一致
-# ============================================================
-
-#       # 步骤1：从 Artifact 下载之前上传的 dl 缓存，恢复到 openwrt/dl 目录
-#       # 若找不到对应 Artifact 不会中断流程（continue-on-error）
-#       - name: Download DL Artifact and restore cache
-#         continue-on-error: true
-#         uses: actions/download-artifact@v4
-#         with:
-#           name: immortalwrt-x86-dl
-#           path: ${{ github.workspace }}/openwrt/dl
-#
-#       # 步骤2：验证缓存是否恢复成功，打印 dl 目录文件列表与占用空间
-#       # 无论上一步成功或失败都会执行（if: always()）
-#       - name: Verify downloaded files
-#         if: always()
-#         run: |
-#           echo "=== DL folder status ==="
-#           ls -lh "${{ github.workspace }}/openwrt/dl" 2>/dev/null || echo "DL folder is empty or not restored"
-#           echo "=== Total size ==="
-#           du -sh "${{ github.workspace }}/openwrt/dl" 2>/dev/null || echo "0"
+          allowUpdates: true
