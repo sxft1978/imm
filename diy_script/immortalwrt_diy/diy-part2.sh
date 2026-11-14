@@ -30,3 +30,5 @@ echo ">>> 正在更新并安装 lang/golang 和 lang/rust..."
 ./scripts/feeds install -p lang_packages lang/golang lang/rust
 
 echo ">>> 全部准备工作完成。"
+# 强制取消勾选 gn 包
+sed -i '/CONFIG_PACKAGE_gn=y/d' .config
