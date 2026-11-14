@@ -1,24 +1,14 @@
-# 1. 拼接绝对路径（系统根目录 + yml传过来的变量）
-SOURCE_FILE="${GITHUB_WORKSPACE}/${FEEDS_CONF}"
-TARGET_FILE="feeds.conf.default"
+# 确保 cd 到了克隆下来的源码目录下
+        cd openwrt
 
-echo ">>> [检查前] 当前源码里的 feeds.conf.default 内容如下 <<<"
-# ========== 注入前，打印源码里的原始 feeds ==========
-cat "$TARGET_FILE"
-echo "========================================================="
+        # 第一行：打印源码里原始的 feeds 内容（方便你排查）
+        echo ">>> [检查] 正在查看 clone 后的源码 feeds.conf.default <<<"
+        cat feeds.conf.default
 
-# 2. 执行注入逻辑（带去重）
-if [ -f "$SOURCE_FILE" ]; then
-    while IFS= read -r line; do
-        grep -qF "$line" "$TARGET_FILE" || echo "$line" >> "$TARGET_FILE"
-    done < "$SOURCE_FILE"
-    
-    echo ">>> [注入后] 追加插件源后的 feeds.conf.default 内容如下 <<<"
-    # ========== 注入后，打印现在的 feeds 列表 ==========
-    cat "$TARGET_FILE"
-    echo "========================================================="
-    
-    echo "✅ 插件源注入完成！"
-else
-    echo ">>> ⚠️ 警告：未找到注入源文件 [ $SOURCE_FILE ] <<<"
-fi
+        # 第二行：核心注入代码！直接把仓库变量的文件内容追加写入
+        echo ">>> [注入] 开始追加自定义插件源 <<<"
+        cat "${GITHUB_WORKSPACE}/${FEEDS_CONF}" >> feeds.conf.default
+
+        # 第三行：验证注入结果（看看是不是多了几行）
+        echo ">>> [结果] 注入后的 feeds.conf.default 内容 <<<"
+        cat feeds.conf.default
