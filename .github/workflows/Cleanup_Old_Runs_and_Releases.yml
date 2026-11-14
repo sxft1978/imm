@@ -45,3 +45,28 @@ jobs:
             --jq '.[].name' \
             | tail -n +"$(( KEEP_RELEASES + 1 ))" \
             | xargs -r -I {} gh release delete {} -y
+
+      - name: Cleanup orphaned remote tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # 1. 获取远端所有 Tag 名称
+          ALL_TAGS=$(gh api repos/$GH_REPO/tags --paginate --jq '.[].name')
+          
+          # 2. 获取所有当前存在的 Release 对应的 Tag
+          RELEASE_TAGS=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
+          
+          # 3. 找出在 ALL_TAGS 中但不在 RELEASE_TAGS 中的 Tag（即孤立 Tag）
+          ORPHAN_TAGS=$(comm -23 <(echo "$ALL_TAGS" | sort) <(echo "$RELEASE_TAGS" | sort))
+          
+          # 4. 循环删除孤立的远端 Tag
+          if [ -z "$ORPHAN_TAGS" ]; then
+            echo "No orphaned tags to delete."
+          else
+            echo "Deleting orphaned tags:"
+            echo "$ORPHAN_TAGS" | while read -r TAG; do
+              echo "  -> $TAG"
+              git push origin --delete "$TAG" || true
+            done
+          fi
