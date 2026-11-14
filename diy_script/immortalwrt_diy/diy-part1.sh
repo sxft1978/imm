@@ -1,14 +1,48 @@
-# 确保 cd 到了克隆下来的源码目录下
-        cd openwrt
+#!/usr/bin/env bash
+set -euo pipefail
 
-        # 第一行：打印源码里原始的 feeds 内容（方便你排查）
-        echo ">>> [检查] 正在查看 clone 后的源码 feeds.conf.default <<<"
-        cat feeds.conf.default
+# 仓库里的 feeds 文件
+SRC="${GITHUB_WORKSPACE}/${FEEDS_CONF:-a}"
 
-        # 第二行：核心注入代码！直接把仓库变量的文件内容追加写入
-        echo ">>> [注入] 开始追加自定义插件源 <<<"
-        cat "${GITHUB_WORKSPACE}/${FEEDS_CONF}" >> feeds.conf.default
+# clone 后的源码目录
+OPENWRT_DIR="${GITHUB_WORKSPACE}/openwrt"
+DST="${OPENWRT_DIR}/feeds.conf.default"
 
-        # 第三行：验证注入结果（看看是不是多了几行）
-        echo ">>> [结果] 注入后的 feeds.conf.default 内容 <<<"
-        cat feeds.conf.default
+echo ">>> 仓库 feeds 文件: $SRC"
+echo ">>> 目标文件: $DST"
+
+if [ ! -f "$SRC" ]; then
+    echo "错误: 仓库 feeds 文件不存在: $SRC"
+    exit 1
+fi
+
+if [ ! -f "$DST" ]; then
+    echo "错误: 源码 feeds.conf.default 不存在: $DST"
+    exit 1
+fi
+
+echo ">>> 注入前 feeds.conf.default <<<"
+cat "$DST"
+
+echo ""
+echo ">>> 开始注入仓库 feeds <<<"
+
+while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    [[ "$line" =~ ^# ]] && continue
+
+    if grep -qF "$line" "$DST"; then
+        echo "已存在，跳过: $line"
+    else
+        echo "$line" >> "$DST"
+        echo "已注入: $line"
+    fi
+done < "$SRC"
+
+echo ""
+echo ">>> 注入后 feeds.conf.default <<<"
+cat "$DST"
+
+cp "$DST" "${OPENWRT_DIR}/feeds.conf"
+
+echo ">>> feeds.conf 已同步 <<<"
