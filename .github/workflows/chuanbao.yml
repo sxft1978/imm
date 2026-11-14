@@ -88,12 +88,12 @@ jobs:
       - name: Load custom configuration
         run: |
           # [ -e files ] && mv files openwrt/files
-          #[ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           # chmod +x $DIY_P2_SH
           #cd openwrt
           #$GITHUB_WORKSPACE/$DIY_P2_SH
           #df -hT
-          make defconfig
+          #make defconfig
 
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
