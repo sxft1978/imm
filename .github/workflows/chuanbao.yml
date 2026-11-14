@@ -102,12 +102,12 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
-       - name: Download package
-         id: package
-         run: |
+      - name: Download package
+        id: package
+        run: |
           cd openwrt
           make defconfig
-          make download -j8
+          make 内部工具 -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
           df -hT $PWD
