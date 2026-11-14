@@ -106,6 +106,9 @@ jobs:
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
+            
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
 
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
