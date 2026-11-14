@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # 1. 注入基础依赖包
 inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang"
 
