@@ -138,6 +138,7 @@ jobs:
           cd openwrt
           ls
           tar -czvf ../openwrt.tar.gz .
+          split -b 600M ../openwrt.tar.gz ../openwrt-part-
           #mv dl /tmp/dl_bak && mv .git /tmp/git_bak && tar -czvf ../openwrt.tar.gz . && mv /tmp/dl_bak dl && mv /tmp/git_bak .git
 
       - name: Create and push tag
