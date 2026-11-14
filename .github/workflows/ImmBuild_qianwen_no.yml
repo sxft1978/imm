@@ -121,6 +121,27 @@ jobs:
       # 安装 feeds 中的软件包。
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
+        
+     # 把自定义 .config 覆盖到 openwrt/.config，并执行 diy-part2 脚本完成个性化定制。
+      - name: Load custom configuration
+        run: |
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          chmod +x $DIY_P2_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+          df -hT
+
+      # 执行 defconfig 并预下载所有源码包，同时清理下载不完整的坏包文件。
+      - name: Download package
+        id: package
+        run: |
+          cd openwrt
+          #make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          df -hT $PWD
+
 
       # 仅在缓存报命中时执行：检查 staging_dir 与 build_dir 工具链目录存在且非空，并实际运行一次 gcc -v 确认可执行，结果以 toolchain_ok 输出给下一步。
       - name: Verify Restored Toolchain
