@@ -150,7 +150,6 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
-
       - name: Create Release and upload openwrt package
         if: env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
@@ -160,3 +159,27 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+
+# ============================================================
+# 【备用模块】从 Artifact 下载 DL 缓存并验证
+# 启用方式：去掉下方所有行开头的 # 号，保持缩进与其他 Step 一致
+# ============================================================
+
+#       # 步骤1：从 Artifact 下载之前上传的 dl 缓存，恢复到 openwrt/dl 目录
+#       # 若找不到对应 Artifact 不会中断流程（continue-on-error）
+#       - name: Download DL Artifact and restore cache
+#         continue-on-error: true
+#         uses: actions/download-artifact@v4
+#         with:
+#           name: immortalwrt-x86-dl
+#           path: ${{ github.workspace }}/openwrt/dl
+#
+#       # 步骤2：验证缓存是否恢复成功，打印 dl 目录文件列表与占用空间
+#       # 无论上一步成功或失败都会执行（if: always()）
+#       - name: Verify downloaded files
+#         if: always()
+#         run: |
+#           echo "=== DL folder status ==="
+#           ls -lh "${{ github.workspace }}/openwrt/dl" 2>/dev/null || echo "DL folder is empty or not restored"
+#           echo "=== Total size ==="
+#           du -sh "${{ github.workspace }}/openwrt/dl" 2>/dev/null || echo "0"
