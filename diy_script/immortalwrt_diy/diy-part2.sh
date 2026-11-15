@@ -46,7 +46,7 @@ echo ">>> 正在更新所有软件源 (feeds update -a)，请耐心等待..."
 
 # 5. 安装指定的包
 echo ">>> 正在安装 lang/golang 和 lang/rust..."
-./scripts/feeds install -p lang_packages golang rus
+./scripts/feeds install -p lang_packages golang rust
 
 echo "========================================="
 echo "✅ 全部操作完成！"
