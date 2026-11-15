@@ -1,59 +1,60 @@
 #!/bin/bash
-
-# ==========================================
-# 第一部分：替换 grub2 编译脚本为大雕稳定版
-# ==========================================
-#echo ">>> 正在替换 grub2 编译脚本为大雕稳定版..."
-
-#if [ -f package/boot/grub2/Makefile ]; then
-#  cp -f package/boot/grub2/Makefile package/boot/grub2/Makefile.bak
-#else
-#  echo ">>> 警告：package/boot/grub2/Makefile 不存在，跳过 grub2 替换。"
-#fi
-
-#wget -O package/boot/grub2/Makefile \
-#  https://raw.githubusercontent.com/coolsnowwolf/lede/master/package/boot/grub2/Makefile \
-#  || { echo ">>> grub2 Makefile 下载失败"; exit 1; }
-
-#echo ">>> grub2 脚本替换完成。"
-
+# =========================================
+# 自动配置并安装 Lang (Golang/Rust)
+# =========================================
 echo "========================================="
 echo "  开始自动配置并安装 Lang (Golang/Rust)"
 echo "========================================="
-# File name: diy-part2.sh
-# Description: OpenWrt DIY script part 2 (After Update feeds)
-#
 
-#------------------------------------------------------移植包---------------------------------------------------------# --- 拉取上游仓库 rm -rf temp_resp
-
-# Add patches
-if [ "$GITHUB_ACTIONS" = "true" ] && [ -n "$GITHUB_RUN_ID" ] && [ -n "$GITHUB_WORKFLOW" ]; then
-    PATCHES_SRC_DIR="$GITHUB_WORKSPACE"
+# 确保 feeds.conf 存在
+if [ ! -f "feeds.conf" ]; then
+    echo ">>> 未找到 feeds.conf，正在使用 feeds.conf.default 生成..."
+    cp "feeds.conf.default" "feeds.conf"
+    echo ">>> feeds.conf 生成成功。"
 else
-    PATCHES_SRC_DIR="../imm"
+    echo ">>> 检测到已存在 feeds.conf，直接沿用当前配置。"
 fi
 
-# =================================================================
-# 极速拉取并注入 Feeds 树的函数
-# =================================================================
+# 确保 packages 源存在（golang 和 rust 都在这个仓库中）
+if ! grep -q "src-git packages" feeds.conf; then
+    echo "src-git packages https://github.com/openwrt/packages.git" >> feeds.conf
+    echo ">>> 已添加 packages 源。"
+else
+    echo ">>> packages 源已存在，跳过。"
+fi
+
+# 移除错误的 my_golang / my_rust 源（如果存在）
+sed -i '/my_golang/d; /my_rust/d' feeds.conf
+
+# =========================================
+# 注入函数：从指定仓库拉取并注入包
+# =========================================
 inject_feed() {
-    local repo_url="$1" feed_dir="$2"
-    shift 2
-    local paths=("$@")
+    local feed_name="$1"
+    local feed_url="$2"
+    local feed_dir="feeds/$feed_name"
+    local fallback_time=$(date +%s)
 
-    echo "🚀 正在从 $repo_url 极速拉取至 $feed_dir ..."
+    echo ""
+    echo ">>> 开始处理 $feed_name 源..."
 
-    # 稀疏检出极速下载
-    git clone --filter=blob:none --sparse --depth=1 "$repo_url" temp_repo > /dev/null 2>&1
-    cd temp_repo
-    git sparse-checkout set "${paths[@]}" > /dev/null 2>&1
-    local fallback_time=$(git log -1 --format=%cd --date=unix 2>/dev/null)
-    cd ..
+    # 清理旧目录
+    rm -rf temp_repo
+    mkdir -p temp_repo
 
-    local feed_name=$(echo "$feed_dir" | cut -d'/' -f2)
+    # 克隆仓库（浅克隆，只拉最新）
+    git clone --depth 1 "$feed_url" temp_repo 2>/dev/null || {
+        echo "❌ 克隆 $feed_url 失败，跳过 $feed_name。"
+        return 1
+    }
 
-    for p in "${paths[@]}"; do
+    # 确保目标目录存在
+    mkdir -p "$feed_dir"
+
+    # 遍历仓库中的 lang 目录
+    for p in lang/*/; do
         [ -d "temp_repo/$p" ] || continue
+
         local pkg_name=$(basename "$p")
         local dest_path="$feed_dir/$pkg_name"
         local symlink_path="package/feeds/$feed_name/$pkg_name"
@@ -70,12 +71,12 @@ inject_feed() {
         # 3. 注入新包
         cp -r "temp_repo/$p" "$dest_path"
 
-        # 4. 提取文件真实时间戳，失败则用仓库 commit 时间
+        # 4. 提取文件实时时间戳，失败则用仓库 log -1 commit 时间
         local file_time=$(cd temp_repo && git log -1 --format=%cd --date=unix -- "$p" 2>/dev/null)
         [ -z "$file_time" ] && file_time="$fallback_time"
         touch -d "@$file_time" "$dest_path" 2>/dev/null || true
 
-        echo "✅ 已注入 $pkg_name → $dest_path"
+        echo "✅ 已注入 $pkg_name -> $dest_path"
     done
 
     # 验证注入结果
@@ -86,8 +87,10 @@ inject_feed() {
     rm -rf temp_repo
 }
 
-# --- 注入 OpenWrt 官方 golang 和 rust 包 inject_feed "https://github.com/openwrt/packages.git" "feeds/packages" "lang/golang" "lang/rust"
+# --- 注入 OpenWrt 官方 golang 和 rust 包
+inject_feed "packages" "https://github.com/openwrt/packages.git"
 
+echo ""
 echo "========================================="
-echo "✅ 替换完成！运行 make menuconfig 勾选编译即可。"
+echo "  Lang (Golang/Rust) 注入完成！"
 echo "========================================="
