@@ -20,10 +20,6 @@
 echo "========================================="
 echo "  开始自动配置并安装 Lang (Golang/Rust)"
 echo "========================================="
-
-
-
-#
 # 功能：从 OpenWrt 官方仓库借用最新 Golang / Rust 包
 #       替换 ImmortalWrt 自带的旧版本
 # 用法：放到 ImmortalWrt 源码根目录，执行 ./inject_golang_rust.sh
