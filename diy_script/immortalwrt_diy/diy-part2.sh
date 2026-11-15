@@ -1,82 +1,73 @@
 #!/bin/bash
-# =========================================
-# 自动配置并安装 Lang (Golang/Rust)
-# =========================================
-echo "========================================="
-echo "  开始自动配置并安装 Lang (Golang/Rust)"
-echo "========================================="
+#
+# Copyright (c) 2019-2025 SmallProgram <https://github.com/smallprogram>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/smallprogram/OpenWrtAction
+# File name: diy-part2.sh
+# Description: OpenWrt DIY script part 2 (After Update feeds)
+#
 
-# 确保 feeds.conf 存在
-if [ ! -f "feeds.conf" ]; then
-    echo ">>> 未找到 feeds.conf，正在使用 feeds.conf.default 生成..."
-    cp "feeds.conf.default" "feeds.conf"
-    echo ">>> feeds.conf 生成成功。"
+# Add patches
+if [ "$GITHUB_ACTIONS" = "true" ] && [ -n "$GITHUB_RUN_ID" ] && [ -n "$GITHUB_WORKFLOW" ]; then
+    PATCHES_SRC_DIR="$GITHUB_WORKSPACE"
 else
-    echo ">>> 检测到已存在 feeds.conf，直接沿用当前配置。"
+    PATCHES_SRC_DIR="../mm"
 fi
 
-# 确保 packages 源存在（golang 和 rust 都在这个仓库中）
-if ! grep -q "src-git packages" feeds.conf; then
-    echo "src-git packages https://github.com/openwrt/packages.git" >> feeds.conf
-    echo ">>> 已添加 packages 源。"
-else
-    echo ">>> packages 源已存在，跳过。"
-fi
 
-# 移除错误的 my_golang / my_rust 源（如果存在）
-sed -i '/my_golang/d; /my_rust/d' feeds.conf
+#------------------------------------------------------移植包---------------------------------------------------------# --- 拉取上游仓库 rm -rf temp_resp
 
-# =========================================
-# 注入函数：从指定仓库拉取并注入包
-# =========================================
+# =================================================================
+# 极速拉取并注入 Feeds 树的函数
+# =================================================================
 inject_feed() {
-    local feed_name="$1"
-    local feed_url="$2"
-    local feed_dir="feeds/$feed_name"
-    local fallback_time=$(date +%s)
+    local repo_url="$1"
+    local feed_dir="$2"
+    shift 2
+    local paths=("$@")
 
-    echo ""
-    echo ">>> 开始处理 $feed_name 源..."
+    echo "🚀 正在从 $repo_url 极速拉取至 $feed_dir ..."
 
-    # 清理旧目录
-    rm -rf temp_repo
-    mkdir -p temp_repo
+    # 使用稀疏检出极速下载（不会拉取无关代码）
+    git clone --filter=blob:none --sparse --depth=1 "$repo_url" temp_repo > /dev/null 2>&1
+    cd temp_repo
+    git sparse-checkout set "${paths[@]}" > /dev/null 2>&1
 
-    # 克隆仓库（浅克隆，只拉最新）
-    git clone --depth 1 "$feed_url" temp_repo 2>/dev/null || {
-        echo "❌ 克隆 $feed_url 失败，跳过 $feed_name。"
-        return 1
-    }
+    # 提取上游最新的 Commit 时间戳 (作为兜底时间)
+    local fallback_time=$(git log -1 --format=%cd --date=unix 2>/dev/null)
+    cd ..
 
-    # 确保目标目录存在
-    mkdir -p "$feed_dir"
+    for p in "${paths[@]}"; do
+        if [ -d "temp_repo/$p" ]; then
+            local pkg_name=$(basename "$p")
+            local dest_path="$feed_dir/$pkg_name"
 
-    # 遍历仓库中的 lang 目录
-    for p in lang/*/; do
-        [ -d "temp_repo/$p" ] || continue
+            # 1. 动态清理 OpenWrt 软链接 (防止文件类型冲突)
+            local feed_name=$(echo "$feed_dir" | cut -d'/' -f2)
+            local symlink_path="package/feeds/$feed_name/$pkg_name"
+            if [ -h "$symlink_path" ] || [ -d "$symlink_path" ]; then
+                rm -rf "$symlink_path"
+            fi
 
-        local pkg_name=$(basename "$p")
-        local dest_path="$feed_dir/$pkg_name"
-        local symlink_path="package/feeds/$feed_name/$pkg_name"
+            # 2. 旧目录存在则改名加后缀备份，不存在则直接注入
+            if [ -d "$dest_path" ]; then
+                mv "$dest_path" "${dest_path}.old"
+                echo "📦 旧版 ${pkg_name} 已备份为 ${pkg_name}.old"
+            fi
 
-        # 1. 清理软链接
-        [ -h "$symlink_path" ] || [ -d "$symlink_path" ] && rm -rf "$symlink_path"
+            # 3. 注入新包
+            cp -r "temp_repo/$p" "$dest_path"
 
-        # 2. 旧目录存在则改名加后缀备份，不存在则直接注入
-        if [ -d "$dest_path" ]; then
-            mv "$dest_path" "${dest_path}.old"
-            echo "📦 旧版 ${pkg_name} 已备份为 ${pkg_name}.old"
+            # 4. 尝试提取文件真实时间戳，如果失败则使用整个库的 commit 时间
+            local file_time=$(cd temp_repo && git log -1 --format=%cd --date=unix -- "$p" 2>/dev/null)
+            [ -z "$file_time" ] && file_time="$fallback_time"
+            touch -d "@$file_time" "$dest_path" 2>/dev/null || true
+
+            echo "✅ 已注入 $pkg_name -> $dest_path"
         fi
-
-        # 3. 注入新包
-        cp -r "temp_repo/$p" "$dest_path"
-
-        # 4. 提取文件实时时间戳，失败则用仓库 log -1 commit 时间
-        local file_time=$(cd temp_repo && git log -1 --format=%cd --date=unix -- "$p" 2>/dev/null)
-        [ -z "$file_time" ] && file_time="$fallback_time"
-        touch -d "@$file_time" "$dest_path" 2>/dev/null || true
-
-        echo "✅ 已注入 $pkg_name -> $dest_path"
     done
 
     # 验证注入结果
@@ -87,10 +78,4 @@ inject_feed() {
     rm -rf temp_repo
 }
 
-# --- 注入 OpenWrt 官方 golang 和 rust 包
-inject_feed "packages" "https://github.com/openwrt/packages.git"
-
-echo ""
-echo "========================================="
-echo "  Lang (Golang/Rust) 注入完成！"
-echo "========================================="
+# --- 注入 OpenWrt 官方 golang 和 rust 包 inject_feed "https://github.com/openwrt/packages.git" "feeds/packages" "lang/golang" "lang/rust"
