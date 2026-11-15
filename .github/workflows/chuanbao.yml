@@ -87,6 +87,7 @@ jobs:
           ${{ github.workspace }}/$DIY_P2_SH 
           df -hT
           cat -A feeds.conf
+          ls feeds/packages/lang/
 
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
