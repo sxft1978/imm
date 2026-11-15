@@ -147,6 +147,6 @@ jobs:
         with:
           artifacts: "openwrt-part-*"
           tag: ${{ env.TAG }}
-          name: "ImmortalWrt X86"
+          name: "ImmortalWrt_${{ env.SOURCE_DIR }}_X86_64"
           body: "自动编译的固件包"
           allowUpdates: true
