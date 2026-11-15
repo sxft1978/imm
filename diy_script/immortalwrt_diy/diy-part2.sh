@@ -42,11 +42,11 @@ cat -A feeds.conf
 
 # 更新所有软件源（使用 -a 批量更新）
 echo ">>> 正在更新所有软件源 (feeds update -a)，请耐心等待..."
-./scripts/feeds update -a
+./scripts/feeds update lang_packages
 
 # 5. 安装指定的包
 echo ">>> 正在安装 lang/golang 和 lang/rust..."
-./scripts/feeds install lang/golang lang/rust
+./scripts/feeds install -p lang_packages golang rus
 
 echo "========================================="
 echo "✅ 全部操作完成！"
