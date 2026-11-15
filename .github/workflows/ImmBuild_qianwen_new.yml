@@ -351,17 +351,6 @@ jobs:
         if: (!cancelled())
         run: df -hT
 
-      # 无论成败都上传 dl 源码包目录为构建产物，便于复用与排障（保留 7 天）。
-      - name: Upload DL folder to Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-dl
-          path: ${{ github.workspace }}/openwrt/dl
-          retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6
-
       # 上传构建日志尾部文件，用于快速定位报错。
       - name: Upload tail log
         if: always()
