@@ -122,7 +122,7 @@ jobs:
           ls -la $GITHUB_WORKSPACE/$SOURCE_DIR
           cd openwrt
           tar -czvf ../openwrt.tar.gz .
-          split -b 600M ../openwrt.tar.gz ../openwrt-part-
+          split -b 1200M ../openwrt.tar.gz ../openwrt-part-
           echo ">>> 分割后的分片列表："
           ls -lh ../openwrt-part-*
 
