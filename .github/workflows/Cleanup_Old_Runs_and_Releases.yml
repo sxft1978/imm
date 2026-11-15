@@ -11,7 +11,7 @@ on:
         default: "10"
         type: string
       keep_releases:
-        description: "保留最近多少个 Release"
+        description: "保留最近多少个 Release / Tag"
         required: false
         default: "3"
         type: string
@@ -24,6 +24,11 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Cleanup old workflow runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,27 +51,36 @@ jobs:
             | tail -n +"$(( KEEP_RELEASES + 1 ))" \
             | xargs -r -I {} gh release delete {} -y
 
-      - name: Cleanup orphaned remote tags
+      - name: Cleanup old remote tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          KEEP_RELEASES: ${{ inputs.keep_releases || '3' }}
         run: |
-          # 1. 获取远端所有 Tag 名称
-          ALL_TAGS=$(gh api repos/$GH_REPO/tags --paginate --jq '.[].name')
-          
-          # 2. 获取所有当前存在的 Release 对应的 Tag
-          RELEASE_TAGS=$(gh release list --limit 1000 --json tagName --jq '.[].tagName')
-          
-          # 3. 找出在 ALL_TAGS 中但不在 RELEASE_TAGS 中的 Tag（即孤立 Tag）
-          ORPHAN_TAGS=$(comm -23 <(echo "$ALL_TAGS" | sort) <(echo "$RELEASE_TAGS" | sort))
-          
-          # 4. 循环删除孤立的远端 Tag
-          if [ -z "$ORPHAN_TAGS" ]; then
-            echo "No orphaned tags to delete."
-          else
-            echo "Deleting orphaned tags:"
-            echo "$ORPHAN_TAGS" | while read -r TAG; do
-              echo "  -> $TAG"
-              git push origin --delete "$TAG" || true
-            done
-          fi
+          set -euo pipefail
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 保留最近 N 个 Release 对应的 Tag
+          KEEP_TAGS=$(
+            gh release list --limit 200 --json tagName \
+              --jq '.[].tagName' \
+              | head -n "$KEEP_RELEASES"
+          )
+
+          # 获取远端所有 Tag
+          ALL_TAGS=$(gh api "repos/$GH_REPO/tags?per_page=100" --paginate --jq '.[].name')
+
+          # 删除不在保留列表里的 Tag
+          echo "$ALL_TAGS" | while read -r TAG; do
+            if [ -z "$TAG" ]; then
+              continue
+            fi
+            if echo "$KEEP_TAGS" | grep -qxF "$TAG"; then
+              continue
+            fi
+            echo "Deleting tag: $TAG"
+            git tag -d "$TAG" || true
+            git push origin --delete "$TAG" || true
+          done
