@@ -38,7 +38,7 @@ if ! grep -q "src-git lang_packages" feeds.conf; then
 else
     echo "⚠️ feeds.conf 中已存在 lang_packages 源，跳过重复注入。"
 fi
-ls feeds.conf
+cat -A feeds.conf
 
 # 更新所有软件源（使用 -a 批量更新）
 echo ">>> 正在更新所有软件源 (feeds update -a)，请耐心等待..."
