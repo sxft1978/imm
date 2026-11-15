@@ -21,35 +21,65 @@ echo "========================================="
 echo "  开始自动配置并安装 Lang (Golang/Rust)"
 echo "========================================="
 
-# 处理 feeds.conf 路径
-if [ ! -f "feeds.conf" ]; then
-    echo ">>> 未找到 feeds.conf，正在使用 feeds.conf.default 生成..."
-    cp feeds.conf.default feeds.conf
-    echo ">>> feeds.conf 生成成功。"
-else
-    echo ">>> 检测到已存在 feeds.conf，直接沿用当前配置。"
-fi
 
-# 检查并注入正确的 lang_packages 源（防止重复添加）
-if [ ! -f "feeds.conf" ]; then
-    if [ -f "feeds.conf.default" ]; then
-        cp feeds.conf.default feeds.conf
-    else
-        echo "错误：未找到 feeds.conf 或 feeds.conf.default。"
-        exit 1
-    fi
-fi
+#!/bin/bash
+#
+# 功能：从 OpenWrt 官方仓库借用最新 Golang / Rust 包
+#       替换 ImmortalWrt 自带的旧版本
+# 用法：放到 ImmortalWrt 源码根目录，执行 ./inject_golang_rust.sh
+#
 
-grep -qxF "src-git my_golang https://github.com/openwrt/packages.git;master;lang/golang" feeds.conf \
-    || echo "src-git my_golang https://github.com/openwrt/packages.git;master;lang/golang" >> feeds.conf
+inject_feed() {
+    local repo_url="$1"        # OpenWrt 官方 packages 仓库
+    local feed_dir="$2"        # 注入目标目录
+    shift 2
+    local paths=("$@")         # 要拉取的子目录
 
-grep -qxF "src-git my_rust https://github.com/openwrt/packages.git;master;lang/rust" feeds.conf \
-    || echo "src-git my_rust https://github.com/openwrt/packages.git;master;lang/rust" >> feeds.conf
+    echo "🚀 从 $repo_url 拉取最新包，替换 ImmortalWrt 原有版本..."
 
-./scripts/feeds update my_golang my_rust
-./scripts/feeds install golang rust
+    # 第 1 步：稀疏检出，只拉需要的目录
+    git clone --filter=blob:none --sparse --depth=1 "$repo_url" temp_repo > /dev/null 2>&1
+    cd temp_repo
+    git sparse-checkout set "${paths[@]}" > /dev/null 2>&1
+    cd ..
+
+    # 第 2 步：逐个替换目标目录
+    for p in "${paths[@]}"; do
+        if [ -d "temp_repo/$p" ]; then
+            local pkg_name=$(basename "$p")
+            local dest_path="$feed_dir/$pkg_name"
+
+            # ① 删除 ImmortalWrt 原有的软链接（feeds update 生成的）
+            local feed_name=$(echo "$feed_dir" | cut -d'/' -f2)
+            local symlink_path="package/feeds/$feed_name/$pkg_name"
+            if [ -h "$symlink_path" ] || [ -d "$symlink_path" ]; then
+                rm -rf "$symlink_path"
+            fi
+
+            # ② 删除 ImmortalWrt 原有包目录，用 OpenWrt 最新版覆盖
+            rm -rf "$dest_path"
+            cp -r "temp_repo/$p" "$dest_path"
+
+            echo "✅ 已用 OpenWrt 最新版替换: $p -> $dest_path"
+        else
+            echo "⚠️  未找到目录: $p，跳过。"
+        fi
+    done
+
+    # 第 3 步：清理临时仓库
+    rm -rf temp_repo
+}
+
 echo "========================================="
-echo "✅ 全部操作完成！"
+echo "  用 OpenWrt 最新 Golang/Rust 替换 ImmortalWrt 原有包"
 echo "========================================="
-echo "你现在可以直接运行 ./scripts/feeds install -a 安装所有包，"
-echo "或者运行 make menuconfig 并在菜单中搜索 'golang' 和 'rust' 进行勾选编译。"
+
+inject_feed \
+    "https://github.com/openwrt/packages.git" \
+    "feeds/packages" \
+    "lang/golang" \
+    "lang/rust"
+
+echo "========================================="
+echo "✅ 替换完成！运行 make menuconfig 勾选编译即可。"
+echo "========================================="
