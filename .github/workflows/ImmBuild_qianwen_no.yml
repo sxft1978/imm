@@ -1,21 +1,4 @@
 name: Immor_qianwen_严谨版本人修改
-# ============================================================
-# ImmortalWrt x86_64 两阶段编译工作流（注释重写版）
-# 本文件只保留 YAML 逻辑本身；所有步骤前的一行注释说明该步骤的功能。
-# 文件逻辑与上一版完全一致（runs-on 已统一 ubuntu-24.04、
-# 缓存 key 绑定 config+feeds 双哈希、校验步骤实测 gcc -v、
-# 仅在工具链真编译成功后保存缓存）。
-# ------------------------------------------------------------
-# 本轮修改内容：
-#   修改1 删除全部旧注释：原 [改动1]~[改动11] 标注、文件头改动清单、
-#         以及散落在 run 脚本内部的说明注释，一律清除。
-#   修改2 重新逐个 step 写功能说明：每个步骤前一行注释，只讲这一步做什么。
-#   修改3 删除 GRUB2 相关步骤：正文中不存在任何 GRUB2 专用编译步骤，
-#         旧清单里"新增独立 GRUB2 编译步骤"的声明一并移除；
-#         env 中的 FORTIFY_FLAGS 保留（它是作用于全部包的通用编译选项，
-#         不是 GRUB2 步骤，删掉会让部分包重新冒出 fortify 报错）。
-#   本轮没有改动任何命令、路径、缓存 key、if 条件与产物发布逻辑。
-# ============================================================
 on:
   workflow_dispatch:
 
@@ -26,7 +9,7 @@ permissions:
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-25.12
+  REPO_BRANCH: master
   WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/86_64.config
@@ -39,8 +22,6 @@ env:
   UPLOAD_ARTIFACT: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  # 抗 fortify 编译选项，经 make 命令行传参统一作用于所有包
-  FORTIFY_FLAGS: "-fno-stack-protector -U_FORTIFY_SOURCE"
 
 jobs:
   # 第一阶段：只做环境准备与交叉工具链编译，并把工具链存入缓存供第二阶段复用
@@ -189,12 +170,12 @@ jobs:
             ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
             ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
-      #- name: Build grub2 host only
-     # - name: Build grub2 (compile mode to bypass config bug)
-        #run: |
-          #cd openwrt
-          #make CONFIG_PACKAGE_openappid=n \
-          #package/boot/grub2/compile V=s阶段：依赖第一阶段，恢复工具链缓存后编译完整固件并发布产物
+      
+#      - name: Build grub2 (compile mode to bypass config bug)
+#        run: |
+#         cd openwrt
+#          make CONFIG_PACKAGE_openappid=n \
+#          package/boot/grub2/compile V=s阶段：依赖第一阶段，恢复工具链缓存后编译完整固件并发布产物
   build-firmware:
     needs: build-toolchain
     runs-on: ubuntu-22.04
