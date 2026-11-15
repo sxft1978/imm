@@ -78,6 +78,7 @@ jobs:
           chmod +x $DIY_P1_SH
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P1_SH
+          cat -A feeds.conf
           df -hT
 
       # 按 key（config + feeds 双哈希）恢复工具链缓存；设 continue-on-error，缓存服务抖动不中断流程，后续由校验与重编兜底。
@@ -311,6 +312,7 @@ jobs:
           chmod +x $DIY_P2_SH
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
+          cat -A feeds.conf
           df -hT
 
       # 从 .config 解析目标架构（x86 系列），写入环境变量供后续产物命名使用。
