@@ -22,7 +22,7 @@ echo "  开始自动配置并安装 Lang (Golang/Rust)"
 echo "========================================="
 
 
-#!/bin/bash
+
 #
 # 功能：从 OpenWrt 官方仓库借用最新 Golang / Rust 包
 #       替换 ImmortalWrt 自带的旧版本
