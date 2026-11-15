@@ -40,11 +40,11 @@ if [ ! -f "feeds.conf" ]; then
     fi
 fi
 
-grep -qxF "src-git my_golang https://github.com/openwrt/packages.git;main;lang/golang" feeds.conf \
-    || echo "src-git my_golang https://github.com/openwrt/packages.git;main;lang/golang" >> feeds.conf
+grep -qxF "src-git my_golang https://github.com/openwrt/packages.git;master;lang/golang" feeds.conf \
+    || echo "src-git my_golang https://github.com/openwrt/packages.git;master;lang/golang" >> feeds.conf
 
-grep -qxF "src-git my_rust https://github.com/openwrt/packages.git;main;lang/rust" feeds.conf \
-    || echo "src-git my_rust https://github.com/openwrt/packages.git;main;lang/rust" >> feeds.conf
+grep -qxF "src-git my_rust https://github.com/openwrt/packages.git;master;lang/rust" feeds.conf \
+    || echo "src-git my_rust https://github.com/openwrt/packages.git;master;lang/rust" >> feeds.conf
 
 ./scripts/feeds update my_golang my_rust
 ./scripts/feeds install golang rust
