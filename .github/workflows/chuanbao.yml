@@ -70,7 +70,7 @@ jobs:
           chmod +x $DIY_P1_SH
           cd openwrt
           ${{ github.workspace }}/$DIY_P1_SH
-          df -hf
+          df -hT
           cat -A feeds.conf
           
       - name: Update feeds
