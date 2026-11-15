@@ -31,23 +31,23 @@ else
 fi
 
 # 检查并注入正确的 lang_packages 源（防止重复添加）
-if ! grep -q "src-git lang_packages" feeds.conf; then
-    echo ">>> 正在向 feeds.conf 注入 lang_packages 源..."
-    echo "src-git lang_packages https://github.com/openwrt/packages.git" >> feeds.conf
-    echo ">>> 注入完成。"
-else
-    echo "⚠️ feeds.conf 中已存在 lang_packages 源，跳过重复注入。"
+if [ ! -f "feeds.conf" ]; then
+    if [ -f "feeds.conf.default" ]; then
+        cp feeds.conf.default feeds.conf
+    else
+        echo "错误：未找到 feeds.conf 或 feeds.conf.default。"
+        exit 1
+    fi
 fi
-cat -A feeds.conf
 
-# 更新所有软件源（使用 -a 批量更新）
-echo ">>> 正在更新所有软件源 (feeds update -a)，请耐心等待..."
-./scripts/feeds update lang_packages
+grep -qxF "src-git my_golang https://github.com/openwrt/packages.git;main;lang/golang" feeds.conf \
+    || echo "src-git my_golang https://github.com/openwrt/packages.git;main;lang/golang" >> feeds.conf
 
-# 5. 安装指定的包
-echo ">>> 正在安装 lang/golang 和 lang/rust..."
-./scripts/feeds install -p lang_packages golang rust
+grep -qxF "src-git my_rust https://github.com/openwrt/packages.git;main;lang/rust" feeds.conf \
+    || echo "src-git my_rust https://github.com/openwrt/packages.git;main;lang/rust" >> feeds.conf
 
+./scripts/feeds update my_golang my_rust
+./scripts/feeds install golang rust
 echo "========================================="
 echo "✅ 全部操作完成！"
 echo "========================================="
