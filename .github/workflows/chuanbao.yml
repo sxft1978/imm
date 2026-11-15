@@ -23,7 +23,6 @@ env:
   UPLOAD_ARTIFACT: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  FORTIFY_FLAGS: "-fno-stack-protector -U_FORTIFY_SOURCE"
 
 jobs:
   build:
