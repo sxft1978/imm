@@ -68,10 +68,13 @@ jobs:
       - name: Load Custom Feeds (before cache key)
         run: |
           chmod +x $DIY_P1_SH
+          chmod +x $DIY_P2_SH
           cd openwrt
           ${{ github.workspace }}/$DIY_P1_SH
           df -hT
-
+          ${{ github.workspace }}/$DIY_P2_SH
+          cat -A feeds.conf
+          
       - name: Update feeds
         run: cd openwrt && ./scripts/feeds update -a
 
