@@ -15,7 +15,7 @@ set -euo pipefail
 if [ "$GITHUB_ACTIONS" = "true" ] && [ -n "$GITHUB_RUN_ID" ]; then
     PATCHES_SRC_DIR="$GITHUB_WORKSPACE"
 else
-    PATCHES_SRC_DIR="../OpenWrtAction"
+    PATCHES_SRC_DIR="../imm"
 fi
 
 # ---------- 工具函数：注入 feed 包 ----------
