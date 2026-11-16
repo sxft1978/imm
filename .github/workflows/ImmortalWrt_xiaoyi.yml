@@ -140,32 +140,7 @@ jobs:
       # 安装 feeds 中的软件包。
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
-
-      # 兜底重编工具链：正常情况必然跳过，仅当缓存整体失效或恢复出的工具链校验不通过时触发，确保不会用残破工具链编固件。
-      - name: Rebuild Toolchain Fallback (only on cache miss or broken cache)
-        id: rebuild-toolchain
-        if: steps.cache-toolchain.outputs.cache-hit != 'true' || steps.verify-toolchain.outputs.toolchain_ok != 'true'
-        run: |
-          cd openwrt
-          make defconfig
-          echo ">>> 兜底重编工具链: $(nproc) 线程"
-          make -j$(nproc) toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
-            || make -j1 V=s toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
-            
-      # 只在本轮真正编译工具链成功那一次才保存缓存，避免半截工具链入库；保存失败不阻断本次运行。
-      - name: Save Toolchain Cache (only after real success)
-        if: steps.build-toolchain.outputs.status == 'success'
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
-          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
-  
-
+      
       # 把自定义 .config 覆盖到 openwrt/.config，并执行 diy-part2 脚本完成个性化定制。
       - name: Load custom configuration
         run: |
