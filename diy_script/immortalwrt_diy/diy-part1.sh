@@ -72,7 +72,7 @@ clone_pkg() {
 
 # ---------------- 🎨 主题美化类 ----------------
 clone_pkg "https://github.com/itsma1Ge/luci-theme-7dollar.git"      "main"   "package/custom_packages/luci-theme-7dollar"
-clone_pkg "https://github.com/jerrykuku/luci-theme-argon.git"       "master" "package/custom_packages/luci-theme-argon"
+# clone_pkg "https://github.com/jerrykuku/luci-theme-argon.git"       "master" "package/custom_packages/luci-theme-argon"
 clone_pkg "https://github.com/mrjoechen/luci-theme-carbon.git"      "main"   "package/custom_packages/luci-theme-carbon"
 clone_pkg "https://github.com/sirpdboy/luci-theme-kucat.git"        "main"   "package/custom_packages/luci-theme-kucat"
 clone_pkg "https://github.com/sirpdboy/luci-app-kucat-config.git"   "main"   "package/custom_packages/luci-app-kucat-config"
