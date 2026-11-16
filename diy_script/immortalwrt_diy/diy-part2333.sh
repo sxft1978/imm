@@ -2,7 +2,7 @@
 # ============================================================
 # diy-part2.sh — OpenWrt 构建流程增强脚本（最终版）
 # 功能：
-#   1. 极速拉取并注入 golang / rust 包
+#   1. 极速拉取并注入 golang / rust 包。
 #   2. 清理冲突包 open-app-filter
 #   3. 注入 banIP 世界地图数据
 #   4. 配置 SSH 双端口（Dropbear 2222 / OpenSSH 22）
