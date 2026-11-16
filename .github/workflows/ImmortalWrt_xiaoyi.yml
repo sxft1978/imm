@@ -1,9 +1,6 @@
-name: ImmortalWrt_xiaoyi
-
+name: Immor_xiaoyi
 on:
   workflow_dispatch:
-  #push:
-    #branches: [ main ]
 
 permissions:
   contents: write
@@ -13,7 +10,7 @@ permissions:
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: master
-  # WORK_PATH: /home/runner/work/imm/imm/
+  WORK_PATH: /home/runner/work/imm/imm/
   SOURCE_DIR: openwrt
   CONFIG_FILE: config/imm_config/86_64.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
@@ -27,15 +24,17 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
+  # 第一阶段：只做环境准备与交叉工具链编译，并把工具链存入缓存供第二阶段复用
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
+      # 打印磁盘概况，纯信息提示。
       - name: Check Server Performance
         run: |
           echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
-          echo "--------------------------硬盘信息--------------------------"
           df -hT
 
+      # 同第一阶段：卸载预装重型软件并清理缓存，为固件全量编译腾出磁盘空间。
       - name: Maximize Build Space (Native Hardcore Clean)
         run: |
           sudo umount /mnt || true
@@ -54,6 +53,7 @@ jobs:
           echo ">>> 清理完成！当前磁盘状态："
           df -h /
 
+      # 同第一阶段：创建 6GB swap，防止内核与软件包全量编译时内存不足。
       - name: Create Massive Swap Space
         run: |
           echo ">>> 正在创建 6GB Swap 虚拟内存..."
@@ -63,12 +63,13 @@ jobs:
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          echo ">>> Swap 创建成功！"
           free -h
 
+      # 检出当前仓库，取得配置与脚本文件。
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 安装编译依赖包，设置权限与时区。
       - name: Initialization environment
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -77,8 +78,9 @@ jobs:
           sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
           sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
           sudo timedatectl set-timezone "$TZ"
-          df -h $pwd
+          df -hT $PWD
 
+      # 克隆源码并软链成 openwrt 目录。
       - name: Clone Source Code (Strict Path)
         working-directory: ${{ github.workspace }}
         run: |
@@ -86,13 +88,16 @@ jobs:
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
           ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
+      # 恢复缓存前覆盖 feeds.conf.default，保证与第一阶段 key 计算口径一致。
       - name: Load Custom Feeds (before cache key)
         run: |
           #[ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
           cd openwrt
-          ${{ github.workspace }}/$DIY_P1_SH
+          $GITHUB_WORKSPACE/$DIY_P1_SH
           df -hT
+
+      # 使用与第一阶段完全相同的 key 与 path，取回第一阶段刚保存的工具链缓存，这是两阶段能衔接复用的关键。
       - name: Restore Toolchain Cache
         id: cache-toolchain
         continue-on-error: true
@@ -101,27 +106,77 @@ jobs:
           path: |
             ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
             ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/toolchain-*
-            ${{ github.workspace }}/${{ env.SOURCE_DIR }}.ccache
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
           key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
           restore-keys: |
             immortalwrt-toolchain-${{ runner.os }}-
-            
+
+      # 缓存命中后校验工具链完整性，并实测 gcc -v 能否执行，防止"目录在但跑不通"的假通过，结果以 toolchain_ok 输出。
+      - name: Verify Restored Toolchain
+        id: verify-toolchain
+        if: steps.cache-toolchain.outputs.cache-hit == 'true'
+        run: |
+          ok=false
+          STAGING_DIR=$(ls -d ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          BUILD_DIR=$(ls -d ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*/ 2>/dev/null | head -n 1)
+          if [ -n "$STAGING_DIR" ] && [ -n "$BUILD_DIR" ] && [ -n "$(ls -A "$STAGING_DIR" 2>/dev/null)" ]; then
+            GCC_BIN=$(find "$STAGING_DIR" -type f -name "*-gcc" | head -n 1)
+            if [ -n "$GCC_BIN" ] && "$GCC_BIN" -v >/dev/null 2>&1; then
+              ok=true
+              echo ">>> 缓存工具链校验通过（已实测 gcc 可执行）: $STAGING_DIR"
+            else
+              echo ">>> 缓存工具链校验不通过：gcc 缺失或无法执行（宿主库不匹配），兜底重编"
+            fi
+          else
+            echo ">>> 缓存工具链校验不通过，将重新编译工具链（兜底，正常情况不应触发）"
+          fi
+          echo "toolchain_ok=$ok" >> $GITHUB_OUTPUT
+
+      # 刷新 feeds 索引。
       - name: Update feeds
         run: cd openwrt && ./scripts/feeds update -a
 
+      # 安装 feeds 中的软件包。
       - name: Install feeds
         run: cd openwrt && ./scripts/feeds install -a
 
+      # 兜底重编工具链：正常情况必然跳过，仅当缓存整体失效或恢复出的工具链校验不通过时触发，确保不会用残破工具链编固件。
+      - name: Rebuild Toolchain Fallback (only on cache miss or broken cache)
+        id: rebuild-toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true' || steps.verify-toolchain.outputs.toolchain_ok != 'true'
+        run: |
+          cd openwrt
+          make defconfig
+          echo ">>> 兜底重编工具链: $(nproc) 线程"
+          make -j$(nproc) toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE" \
+            || make -j1 V=s toolchain/install TARGET_CFLAGS="${{ env.FORTIFY_FLAGS }}" TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
+            
+      # 只在本轮真正编译工具链成功那一次才保存缓存，避免半截工具链入库；保存失败不阻断本次运行。
+      - name: Save Toolchain Cache (only after real success)
+        if: steps.build-toolchain.outputs.status == 'success'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/dl
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/staging_dir
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/build_dir/toolchain-*
+            ${{ github.workspace }}/${{ env.SOURCE_DIR }}/.ccache
+          key: immortalwrt-toolchain-${{ runner.os }}-${{ hashFiles('config/imm_config/86_64.config', 'feeds_config/immortalwrt.feeds.conf.default') }}
+  
+
+      # 把自定义 .config 覆盖到 openwrt/.config，并执行 diy-part2 脚本完成个性化定制。
       - name: Load custom configuration
         run: |
-          # [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
           cd openwrt
-          ${{ github.workspace }}/$DIY_P2_SH
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+          cat -A feeds.conf
           df -hT
 
+      # 从 .config 解析目标架构（x86 系列），写入环境变量供后续产物命名使用。
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
         run: |
@@ -129,6 +184,7 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
+      # 执行 defconfig 并预下载所有源码包，同时清理下载不完整的坏包文件。
       - name: Download package
         id: package
         run: |
@@ -139,35 +195,24 @@ jobs:
           find dl -size -1024c -exec rm -f {} \;
           df -hT $PWD
 
+      # 全量编译固件（内核、驱动、软件包与镜像），失败时逐级降级重试；成功后提取设备名与时间戳写入环境变量。
       - name: Compile the firmware
         id: compile
         run: |
           cd openwrt
-          export TARGET_CFLAGS="-fno-stack-protector -U_FORTIFY_SOURCE"
-          export TARGET_CPPFLAGS="-U_FORTIFY_SOURCE"
           echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 || make -j1 V=s
+          make -j$(nproc)  || make -j1 || make -j1 V=s
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
           [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
           echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
+      # 编译结束后查看磁盘占用情况。
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
 
-      # [改动] 编译完成后始终上传 DL 目录，方便后续复用
-      - name: Upload DL folder to Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-dl
-          path: ${{ github.workspace }}/openwrt/dl
-          retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6
-
-      # [改动] 编译失败时上传编译日志
+      # 上传构建日志尾部文件，用于快速定位报错。
       - name: Upload tail log
         if: always()
         uses: actions/upload-artifact@v4
@@ -176,6 +221,7 @@ jobs:
           path: /tmp/imm-build.log
           retention-days: 3
 
+      # 上传 error.txt 与 compile.txt 两类日志文件。
       - name: Upload IMM build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -186,6 +232,7 @@ jobs:
             logs/compile.txt
           retention-days: 3
 
+      # 仅在失败时上传 compile.log 完整编译日志。
       - name: Upload compile log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -195,6 +242,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # 按 UPLOAD_BIN_DIR 开关决定是否上传整个 bin 目录。
       - name: Upload bin directory
         uses: actions/upload-artifact@v4
         if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
@@ -202,6 +250,7 @@ jobs:
           name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: openwrt/bin
 
+      # 进入固件输出目录，删除 packages 子目录，把固件所在路径写入 FIRMWARE 环境变量。
       - name: Organize files
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -211,6 +260,7 @@ jobs:
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
+      # 上传整理后的固件目录作为构建产物。
       - name: Upload firmware directory
         uses: actions/upload-artifact@v4
         if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -218,6 +268,7 @@ jobs:
           name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
+      # 按发布前缀加日期时间生成 Release 标签并准备说明文件。
       - name: Generate release tag
         id: tag
         if: env.UPLOAD_RELEASE == 'true' && !cancelled()
@@ -226,6 +277,7 @@ jobs:
           touch release.txt
           echo "status=success" >> $GITHUB_OUTPUT
 
+      # 创建 GitHub Release，并把固件文件作为附件发布出去。
       - name: Upload firmware to release
         uses: ncipollo/release-action@v1.14.0
         if: steps.tag.outputs.status == 'success' && !cancelled()
