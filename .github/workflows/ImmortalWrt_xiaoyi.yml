@@ -26,7 +26,7 @@ env:
 jobs:
   # 第一阶段：只做环境准备与交叉工具链编译，并把工具链存入缓存供第二阶段复用
   build:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
     steps:
       # 打印磁盘概况，纯信息提示。
       - name: Check Server Performance
