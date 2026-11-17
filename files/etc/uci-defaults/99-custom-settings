@@ -1,0 +1,14 @@
+#!/bin/sh
+# 仓库路径：files/etc/uci-defaults/99-custom-settings
+# 作用：固件第一次启动时，修改软件源为中科大 + 修改LAN口IP和网关
+
+# ========== 修改软件源为中科大 ==========
+APK_CONF="/etc/apk/repositories.d/distfeeds.list"
+IMMORTALWRT_MIRROR="https://mirrors.ustc.edu.cn/immortalwrt"
+
+if [ -f "$APK_CONF" ]; then
+    sed -i \
+        -e "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" \
+        -e "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" \
+        "$APK_CONF"
+fi
