@@ -1,3 +1,4 @@
+首先要选中默认设置 d-setting
 CONFIG_DEFAULT_luci-app-package-manager=y
 CONFIG_PACKAGE_luci-app-accesspolicycontroller=y
 CONFIG_PACKAGE_luci-app-acme=y
