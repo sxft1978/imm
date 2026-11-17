@@ -91,7 +91,7 @@ jobs:
       # 恢复缓存前覆盖 feeds.conf.default，保证与第一阶段 key 计算口径一致。
       - name: Load Custom Feeds (before cache key)
         run: |
-          [ -e file ] && cp file/* openwrt/
+          [ -e files ] && cp -rf files/* openwrt/
           #[ -e $FEEDS_CONF ] && cp $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
           cd openwrt
