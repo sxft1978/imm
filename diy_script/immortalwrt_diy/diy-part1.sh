@@ -104,19 +104,19 @@ fi
 #   - 想换成 192.168.1.130，把下面 LAN_IP 的值改一下即可
 #   - 改的是【克隆下来的源码】里的默认配置，不动你仓库本身
 # ==========================================================
-LAN_IP="192.168.1.129"        # 这里填 192.168.1.129 或 192.168.1.130
-IP_FILE="package/base-files/files/bin/config_generate"
+# LAN_IP="192.168.1.129"        # 这里填 192.168.1.129 或 192.168.1.130
+# IP_FILE="package/base-files/files/bin/config_generate"
 
-echo ">>> [第三步] 正在修改默认 LAN IP 为: $LAN_IP"
-if [ -f "$IP_FILE" ]; then
+# echo ">>> [第三步] 正在修改默认 LAN IP 为: $LAN_IP"
+# if [ -f "$IP_FILE" ]; then
     # ImmortalWrt/OpenWrt 默认网关地址写在 config_generate 的 lanip 变量里
     # 精确匹配被引号/空格包裹的完整 192.168.1.1，避免误改成 129 后再叠成 12929
-    sed -i -E "s#([\"' ])192\.168\.1\.1([\"' ])#\1$LAN_IP\2#g" "$IP_FILE"
-    echo "  >> [完成] 已写入 $IP_FILE"
-    grep -n "$LAN_IP" "$IP_FILE" | head -n 5 || true
-else
-    echo "  ⚠️ 未找到 $IP_FILE（源码目录结构可能不同），请手动确认默认 IP 文件路径。"
-fi
+ #    sed -i -E "s#([\"' ])192\.168\.1\.1([\"' ])#\1$LAN_IP\2#g" "$IP_FILE"
+ #    echo "  >> [完成] 已写入 $IP_FILE"
+ #    grep -n "$LAN_IP" "$IP_FILE" | head -n 5 || true
+# else
+#     echo "  ⚠️ 未找到 $IP_FILE（源码目录结构可能不同），请手动确认默认 IP 文件路径。"
+# fi
 
-echo ""
+# echo ""
 echo "🎉 diy-part1.sh 全部执行完毕！本地编译环境已就绪。"
