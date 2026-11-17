@@ -33,9 +33,6 @@ CONFIG_PACKAGE_luci-app-msd_lite=y
 CONFIG_PACKAGE_luci-app-netdata=y
 CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_luci-app-openvpn=y
-
-luci modules    luci-base   luci-admin-full    luci-mod-sys
-
 CONFIG_PACKAGE_luci-app-package-manager=y
 CONFIG_PACKAGE_luci-app-passwall=y
 CONFIG_PACKAGE_luci-app-passwall2=y
@@ -99,5 +96,8 @@ CONFIG_PACKAGE_luci-app-v2raya=y
 CONFIG_PACKAGE_luci-app-vlmcsd=y
 CONFIG_PACKAGE_luci-app-vnstat2=y
 CONFIG_PACKAGE_luci-app-wechatpush=y
+
+luci modules    luci-base   luci-admin-full    luci-mod-sys
+luci modules   translation  找中文
 CONFIG_PACKAGE_luci-app-wol=y
 CONFIG_PACKAGE_luci-app-zerotier=y
