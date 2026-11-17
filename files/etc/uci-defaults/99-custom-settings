@@ -12,3 +12,12 @@ if [ -f "$APK_CONF" ]; then
         -e "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" \
         "$APK_CONF"
 fi
+
+#
+
+uci set network.lan.ipaddr='192.168.1.129/24'
+uci set network.lan.gateway='192.168.1.1'
+uci set network.lan.dns='192.168.1.1'
+uci commit network
+
+exit 0
