@@ -59,9 +59,9 @@ jobs:
       fail-fast: false               # 一个设备编译失败，不中止其他设备的并行任务
       max-parallel: 3                # 限制最大并行数，避免磁盘 IO 竞争
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
-    defaults:
-      run:
-        working-directory: ${{ env.WORKSPACE }}
+    #defaults:
+      #run:
+        #working-directory: ${{ env.WORKSPACE }}
 
     steps:
       # Step 1: 迁移 Docker 数据目录并初始化大磁盘工作空间
