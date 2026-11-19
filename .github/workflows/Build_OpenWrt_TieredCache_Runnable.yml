@@ -65,7 +65,7 @@ env:
 # ===== 任务主体 =====
 jobs:
   build:
-    runs-on: ubuntu-26.04  # 使用 GitHub 最新最干净的 Ubuntu 26.04 环境
+    runs-on: ubuntu-24.04  # 使用 GitHub 最新最干净的 Ubuntu 26.04 环境
     steps:
       
       # --- 1. 基础环境准备 ---
