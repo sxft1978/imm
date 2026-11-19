@@ -69,16 +69,35 @@ jobs:
       # 将 Docker 数据目录迁移到 /workdir（通常有 80GB+ 可用空间）
       - name: Relocate Docker & Workspace
         run: |
-          sudo mkdir -p /workdir
-          sudo chown runner:runner /workdir
+          # 1. 创建 Docker 数据根目录并获取权限
+          sudo mkdir -p /workdir/docker
+          sudo chown -R runner:runner /workdir
+
+          # 2. 获取当前任务的完整名称（例如：lede-armvrt-64）
+          CURRENT_NAME="${{ matrix.target_profile }}"
+          # 去掉名称中可能存在的空格或危险字符，替换为下划线（安全起见）
+          SAFE_DIR_NAME=$(echo "$CURRENT_NAME" | tr ' ' '_' | sed 's/[^a-zA-Z0-9_-]//g')
+
+          # 3. 创建当前任务专属的编译目录
+          # 最终生成类似：/workdir/lede-armvrt-64/d1
+          CURRENT_BUILD_DIR="/workdir/${SAFE_DIR_NAME}/d1"
+          sudo mkdir -p "${CURRENT_BUILD_DIR}"
+          
+          # 4. 把拉取到的完整源码精准复制到当前任务的工作目录下
+          cp -r ./* "${CURRENT_BUILD_DIR}/"
+          
+          # 5. 迁移 Docker 并重启
           echo "DOCKER_OPTS=--data-root /workdir/docker" | sudo tee -a /etc/default/docker
           sudo systemctl restart docker
-          # 等待 Docker 守护进程就绪，避免后续 login/build 失败
+          
+          # 6. 等待 Docker 恢复正常
           for i in $(seq 1 10); do
             sudo docker info >/dev/null 2>&1 && break
             sleep 2
           done
-          echo "DISK_FREE_SPACE=$(df /workdir --output=avail -h | tail -1)" >> $GITHUB_ENV
+          
+          # 7. 获取磁盘可用空间，用于后续步骤
+          echo "DISK_FREE_SPACE=$(df /workdir --output=avail . | tail -1)" >> $GITHUB_ENV
 
       # Step 2: 登录 GitHub Container Registry (GHCR)
       # 用于后续将 Tier3 编译产物打包为 Docker 镜像推送
