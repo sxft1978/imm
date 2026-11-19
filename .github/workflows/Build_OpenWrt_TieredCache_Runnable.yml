@@ -1,249 +1,365 @@
-# ============================================================
-# Multi-Source Tiered Cache Build
-# 多源码三级缓存编译工作流（定稿版）
-#
-# 缓存体系：
-#   Tier1 (dl)        - 源码包下载目录，通过 actions/cache 存储
-#   Tier2 (toolchain) - 交叉编译工具链，通过 actions/cache 存储
-#   Tier3 (target)    - 目标设备编译产物，通过 Docker 镜像存储到 GHCR
-#
-# 触发方式：手动触发（workflow_dispatch）
-# 数据来源：矩阵由 scripts/build_matrix.sh 动态生成，加设备只改脚本
-# ============================================================
+name: Immor_xiaoyi三层缓存+Docker加速版
 
-name: Multi-Source Tiered Cache Build
-
+# -----------------------------------------------------------------------------
+# 触发：手动点 Run workflow。新增两个可选开关：
+#   ssh_between        = 在「编译后」拉一个 60 分钟 tmate，方便连进去看缓存/编译现场
+#   force_rebuild      = 无视缓存纯净重编（restore 走 clean 分支）
+# -----------------------------------------------------------------------------
 on:
   workflow_dispatch:
     inputs:
-      force_rebuild:
-        description: '是否强制清理缓存重新编译（忽略所有缓存）'
+      ssh_between:
+        description: '编译后 SSH 调试（是/否）'
         required: false
-        default: false
+        default: 'false'
+      force_rebuild:
+        description: '无视缓存纯净重编译'
+        required: false
         type: boolean
+        default: false
 
-# 全局环境变量
-env:
-  WORKSPACE: /workdir                # 统一使用大磁盘挂载目录，避免 GitHub Runner 默认磁盘空间不足
-  UPLOAD_FIRMWARE: true              # 是否将固件上传到 Actions 产物
-  UPLOAD_RELEASE: true               # 编译完成后是否自动发布到 GitHub Release
-
+# packages: write —— tier3 推 GHCR 镜像、Docker 镜像推送都依赖它（你原来就开了，保留）。
 permissions:
-  contents: write                    # 允许写入仓库内容（用于 Release 发布）
-  packages: write                    # 允许推送容器镜像到 GHCR
-  actions: write                     # 允许管理 Actions 缓存
+  contents: write
+  actions: write
+  packages: write
+
+# -----------------------------------------------------------------------------
+# 你原来定义的 env 全部保留；只在其后追加「三层缓存 + Docker」所需的变量。
+#   CACHE_ROOT：分块/marker 的暂存根目录（放在工作区内，不动你的源码树路径）。
+#   SRC_DIR：脚本眼里 openwrt 的位置，指到你 Clone 出来的 $GITHUB_WORKSPACE/openwrt。
+#   ARCH/DEVICE/SOURCE_CODE_PLATFORM：x86 单机型，稳定层按 ARCH 跨设备共享缓存键。
+#   TIER3_PATHS：x86 目标三元组目录用 glob(target-x86_64_*) 兜住完整后缀。
+# -----------------------------------------------------------------------------
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: master
+  WORK_PATH: /home/runner/work/imm/imm/
+  SOURCE_DIR: openwrt
+  CONFIG_FILE: config/imm_config/xiaoyi_x86.config
+  FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
+  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
+  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
+  RELEASE_TAG: immortalwrt-X86
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  # ---- 以下为「分层缓存 + Docker」追加项 ----
+  SOURCE_CODE_PLATFORM: immortalwrt
+  DEVICE: xiaoyi_x86
+  ARCH: X86_64
+  CACHE_ROOT: ${{ github.workspace }}/.cache_tiered
+  SRC_DIR: ${{ github.workspace }}/openwrt
+  REPO_PREFIX: openwrt-tiered-cache
+  CHUNK_SIZE: 2000M
+  ZSTD_LEVEL: 10
+  TIER2_PATHS: build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg
+  TIER3_PATHS: build_dir/target-x86_64_* staging_dir/target-x86_64_*
+  # Docker 镜像推送目标（GHCR 自动落到你 fork 账户名下）
+  DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/immortalwrt-xiaoyi
 
 jobs:
-  # ========== 第一步：从脚本生成编译矩阵 ==========
-  generate-matrix:
-    runs-on: ubuntu-22.04
-    outputs:
-      # 将脚本输出的 JSON 数组作为矩阵数据传递给下游 job
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      # 签出仓库，获取 scripts/build_matrix.sh
-      - uses: actions/checkout@v4
-
-      # 执行脚本，将输出转为紧凑 JSON 格式，写入 GITHUB_OUTPUT
-      - id: set-matrix
-        run: |
-          chmod +x scripts/build_matrix.sh
-          #echo "matrix=$(scripts/build_matrix.sh | jq -c '.')" >> "$GITHUB_OUTPUT"
-          echo "matrix={\"include\":$(scripts/build_matrix.sh | jq -c '.')}" >> "$GITHUB_OUTPUT"
-
-  # ========== 第二步：并行编译所有目标设备 ==========
   build:
-    needs: generate-matrix           # 依赖上一步生成的矩阵数据
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false               # 一个设备编译失败，不中止其他设备的并行任务
-      max-parallel: 3                # 限制最大并行数，避免磁盘 IO 竞争
-      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
-    #defaults:
-      #run:
-        #working-directory: ${{ env.WORKSPACE }}
-
+    runs-on: ubuntu-26.04
     steps:
-      # Step 1: 迁移 Docker 数据目录并初始化大磁盘工作空间
-      # GitHub Runner 默认根分区空间有限（约 14GB），编译 OpenWrt 容易爆盘
-      # 将 Docker 数据目录迁移到 /workdir（通常有 80GB+ 可用空间）
-      - name: Relocate Docker & Workspace
+      # ===== 你原有的步骤（原样保留） =====
+      - name: Check Server Performance
         run: |
-          # 1. 获取 Docker 数据根目录权限
-          sudo mkdir -p /workdir/docker
-          sudo chown -R runner:runner /workdir
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          df -hT
 
-          # 2. 迁移 Docker 数据根目录
-          echo "DOCKER_OPTS=--data-root /workdir/docker" | sudo tee -a /etc/default/docker
-          sudo systemctl restart docker
+      - name: Maximize Build Space (Native Hardcore Clean)
+        run: |
+          sudo umount /mnt || true
+          sudo rm -rf /mnt/* || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/lib/jvm || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
+          echo ">>> 清理完成！当前磁盘状态："
+          df -h /
 
-          # 3. 等待 Docker 恢复正常
-          for i in $(seq 1 10); do
-            sudo docker info >/dev/null 2>&1 && break
-            sleep 2
-          done
+      - name: Create Massive Swap Space
+        run: |
+          echo ">>> 正在创建 6GB Swap 虚拟内存..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
-          # 4. 获取磁盘可用空间
-          echo "DISK_FREE_SPACE=$(df /workdir --output=avail . | tail -1)" >> $GITHUB_ENV
-          
-          # 5. 【关键】将当前工作目录设置为 /workdir，让后续步骤直接在这里操作
-          echo "GITHUB_WORKSPACE=/workdir" >> $GITHUB_ENV
-
-      # Step 2: 登录 GitHub Container Registry (GHCR)
-      # 用于后续将 Tier3 编译产物打包为 Docker 镜像推送
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Step 3: 签出配置仓库（包含 .config 配置文件和 Shell 脚本）
-      - name: Checkout Config & Scripts
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          path: repo                 # 签出到 repo 子目录，避免和源码目录冲突
 
-      # Step 4: 克隆目标固件源码
-      # 使用 --depth 1 浅克隆，节省时间和磁盘空间
-      - name: Clone Source (${{ matrix.name }})
+      # ===== [新增·A] 给缓存脚本加执行权限 + 登录 GHCR =====
+      #   login 是 tier3 推拉镜像、以及最后 Docker 镜像推送的共同前提，放在最前面只做一次。
+      - name: Prep Cache Script & Login GHCR
         run: |
-          git clone --depth 1 -b ${{ matrix.REPO_BRANCH }} ${{ matrix.REPO_URL }} ${{ matrix.DEVICE }}
-          chmod +x repo/scripts/cache_tiered.sh
+          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh
+          mkdir -p "$CACHE_ROOT"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # Step 5: 计算第一层缓存（dl 源码包目录）的指纹
-      # 指纹基于 dl 目录下所有文件的文件名和大小生成，用于判断源码包是否有变化
-      - name: Fingerprint Tier1 (dl) - ${{ matrix.name }}
-        if: ${{ !inputs.force_rebuild }}
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          cd ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/dl
-          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh fp tier1
-        id: fp_tier1
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
+          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+          sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
 
-      # Step 6: 还原第一层缓存（dl 源码包）
-      # 如果指纹匹配，直接恢复之前下载的源码包，跳过重复下载
-      - name: Restore Tier1 Cache - ${{ matrix.name }}
-        if: ${{ !inputs.force_rebuild }}
+      - name: Clone Source Code (Strict Path)
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -hT $PWD
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+
+      - name: Load Custom Feeds (before cache key)
+        run: |
+          [ -e files ] && cp -rf files/* openwrt/
+          chmod +x $DIY_P1_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P1_SH
+          df -hT
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      - name: Load custom configuration
+        run: |
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          chmod +x $DIY_P2_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+          cat -A feeds.conf
+          df -hT
+
+      - name: Get architecture
+        working-directory: ${{ github.workspace }}/openwrt
+        run: |
+          TARGET_DEVICE_ARCH="$(grep "^CONFIG_TARGET_.*=y$" ".config" | head -n 1 | sed 's/^CONFIG_TARGET_//g' | sed 's/=y//g' | awk -F '_' '{print $1}')"
+          echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
+          echo "MIXKEY=X86_64" >>$GITHUB_ENV
+
+      # ===== [新增·B] 算三层指纹：指纹进 cache key（配合 restore-keys 前缀回退，命中即零传输） =====
+      - name: Fingerprint Stable Tiers
+        id: fp
+        run: |
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier2
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier3
+
+      # ===== [新增·C] Actions Cache 还原稳定层（tier1=dl，tier2=工具链） =====
+      #   path 指向脚本 pack 出来的「分块目录」；exact 键带指纹，miss 时按分支/架构前缀回退，
+      #   尽量捞到最近的旧稳定层，而不是彻底落空。命中=既不重传也不重下（零传输）。
+      - name: Restore tier1 dl from Actions Cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/dl
-          key: dl-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-${{ steps.fp_tier1.outputs.fp_tier1 }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier1
+          key: dl-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}
           restore-keys: |
-            dl-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-
+            dl-${{ env.ARCH }}-${{ github.ref_name }}-
+            dl-${{ env.ARCH }}-
 
-      # Step 7: 计算第二层缓存（交叉编译工具链）的指纹
-      # 指纹基于 host 工具链和 staging_dir/host 目录生成
-      - name: Fingerprint Tier2 (toolchain) - ${{ matrix.name }}
-        if: ${{ !inputs.force_rebuild }}
-        run: |
-          cd ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
-          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh fp tier2
-        id: fp_tier2
-
-      # Step 8: 还原第二层缓存（工具链）
-      # 恢复之前编译好的 host 工具和交叉编译工具链，避免重复编译
-      - name: Restore Tier2 Cache - ${{ matrix.name }}
-        if: ${{ !inputs.force_rebuild }}
+      - name: Restore tier2 toolchain from Actions Cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/host
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/hostpkg
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/host
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/hostpkg
-          key: toolchain-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-${{ steps.fp_tier2.outputs.fp_tier2 }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier2
+          key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier2 }}
           restore-keys: |
-            toolchain-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-
+            tc-${{ env.ARCH }}-${{ github.ref_name }}-
+            tc-${{ env.ARCH }}-
 
-      # Step 9: 还原自动编译进度标记 & 加载 .config 配置文件
-      # 先还原之前保存的编译进度（如果有），再覆盖项目的 .config 配置文件
-      # 最后执行 make defconfig 确保配置生效
-      - name: Restore Auto & Defconfig - ${{ matrix.name }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+      # ===== [新增·D] 逐层还原主逻辑 =====
+      #   tier1/tier2 若上一步已落盘 -> 本地解压进 openwrt（零网络）；
+      #   tier3 -> 回落 GHCR 用 docker cp 逐块取；force_rebuild -> clean 全跳过。
+      - name: Restore Cache per Tier
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
+
+      # ===== 你原有的下载步骤（dl 若已还原，这里几乎不再联网） =====
+      - name: Download package
+        id: package
         run: |
-          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh restore auto
-          cp ${{ env.WORKSPACE }}/repo/${{ matrix.CONFIG_FILE }} .config
-          make defconfig
+          cd openwrt
+          make 内部工具 -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          df -hT $PWD
 
-      # Step 10: 编译基础工具和交叉编译工具链
-      # 编译前创建一个时间戳标记文件，后续用于判断哪些文件是新编译产生的
-      - name: Compile Base & Tools - ${{ matrix.name }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+      # ===== 你原有的全量编译；仅在开头加一行 touch marker 作为 gate 差量锚点 =====
+      - name: Compile the firmware
+        id: compile
         run: |
-          touch .compile_marker_base   # 建立基准时间标记，用于后续判断 Tier2/Tier3 变动
-          make tools/compile toolchain/compile -j$(nproc)
+          cd openwrt
+          # [新增] 编译前打时间锚点：之后只有比它更新的 stamp 才算「本轮真编过的包」
+          touch "$CACHE_ROOT/base_compilation_marker"
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc)  || make -j1 || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      # Step 11: 提前下载所有软件包源码
-      # 使用 timeout 限制下载时间，避免网络问题导致长时间卡住
-      # continue-on-error: true 确保下载失败不中断编译流程
-      - name: Download Packages - ${{ matrix.name }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
-        continue-on-error: true
-        run: timeout 25m make download -j$(nproc) || true
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
 
-      # Step 12: 正式编译固件
-      # 先尝试普通编译，失败后自动切换 V=s 详细模式重新编译（便于排查问题）
-      - name: Compile Firmware - ${{ matrix.name }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
-        run: make -j$(nproc) || make -j$(nproc) V=s
+      # ===== [新增·E] 编译后 SSH 调试（可选） =====
+      - name: Setup SSH debug (optional)
+        uses: mxl-lx/actions-ssh@main
+        if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
+        with:
+          interval-min: '2'
+          count: '30'
+          targets: 'server@'
 
-      # Step 13: 检测第二层（工具链）是否有变动
-      # 对比编译前后 staging_dir/host/stamp 目录的变化，判断工具链是否重新编译
-      - name: Gate Tier2 - ${{ matrix.name }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
-        run: bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh gate tier2
-        id: gate_tier2
+      # ===== [新增·F] gate：逐层判定变没变（独立输出 changed_tier2/3，互不覆盖） =====
+      - name: Gate Tiers
+        id: gate
+        run: |
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
 
-      # Step 14: 如果第二层有变动，则保存新的工具链缓存
-      # 只有当工具链确实重新编译时，才更新缓存，避免无效写入
-      - name: Save Tier2 Cache - ${{ matrix.name }}
-        if: ${{ !inputs.force_rebuild && steps.gate_tier2.outputs.changed_tier2 != '0' }}
+      # ===== [新增·G] tier2 变了才 repack + 存回 Actions Cache（用重算后的新指纹做键） =====
+      - name: Repack tier2 if Changed
+        if: steps.gate.outputs.changed_tier2 == '1'
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
+
+      - name: Save tier2 to Actions Cache
+        if: steps.gate.outputs.changed_tier2 == '1'
         uses: actions/cache/save@v4
         with:
-          path: |
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/host
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/hostpkg
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/host
-            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/hostpkg
-          key: toolchain-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-${{ steps.fp_tier2.outputs.fp_tier2 }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier2
+          key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier2 }}
 
-      # Step 15: 检测第三层（目标设备编译产物）是否有变动
-      # 对比 build_dir/target-* 和 staging_dir/target-* 的 stamp 文件变化
-      - name: Gate Tier3 - ${{ matrix.name }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
-        run: bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh gate tier3
-        id: gate_tier3
-
-      # Step 16: 如果第三层有变动，则打包为 Docker 镜像推送到 GHCR
-      # 将目标设备的编译产物打包为镜像，作为 Tier3 缓存保存
-      - name: Pack & Push Tier3 - ${{ matrix.name }}
-        if: ${{ !inputs.force_rebuild && steps.gate_tier3.outputs.changed_tier3 != '0' }}
-        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+      # ===== [新增·H] tier3 变了才打包并推 GHCR（digest 去重：只上传变过的分块） =====
+      - name: Pack and Push tier3 if Changed
+        if: steps.gate.outputs.changed_tier3 == '1'
         run: |
-          export ARCH="${{ matrix.ARCH }}"
-          export TIER3_IMAGE="ghcr.io/${{ github.repository }}/${{ matrix.DEVICE }}"
-          export GITHUB_REPOSITORY="${{ github.repository }}"
-          export GITHUB_SHA="${{ github.sha }}"
-          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh pack tier3
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh image tier3
 
-      # Step 17: 将编译好的固件上传到 GitHub Actions 产物
-      # 保留 5 天，方便手动下载测试；如果没有生成固件文件则只警告不报错
-      - name: Upload Firmware Artifact - ${{ matrix.name }}
-        if: env.UPLOAD_FIRMWARE == 'true'
+      # ===== [新增·I] 稳定层 dl(tier1) 归档回存：dl 下载后必然有内容，重算指纹存新键 =====
+      - name: Repack & Save tier1 dl
+        if: steps.gate.outcome == 'success'
+        run: |
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
+        id: fp1end
+
+      - name: Save tier1 to Actions Cache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_ROOT }}/tiered/tier1
+          key: dl-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp1end.outputs.fp_tier1 }}
+
+      # ===== 你原有的日志上传步骤（原样保留） =====
+      - name: Upload tail log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}-firmware
-          path: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/bin/targets/*/*/*
-          retention-days: 5
+          name: imm-tail-${{ github.run_id }}
+          path: /tmp/imm-build.log
+          retention-days: 3
+
+      - name: Upload IMM build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-error-${{ github.run_id }}
+          path: |
+            logserror.txt
+            logscompile.txt
+          retention-days: 3
+
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-compile-log
+          path: ${{ github.workspace }}/openwrt/compile.log
+          retention-days: 7
           if-no-files-found: warn
 
-      # Step 18: 发布固件到 GitHub Release
-      # 自动创建 Release 标签，将固件文件附加到 Release 页面供下载
-      - name: Publish GitHub Release - ${{ matrix.name }}
-        if: env.UPLOAD_RELEASE == 'true'
-        uses: softprops/action-gh-release@v1
+      - name: Upload bin directory
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
         with:
-          files: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/bin/targets/*/*/*
-          tag_name: ${{ matrix.RELEASE_TAG || format('{0}_{1}', matrix.DEVICE, github.run_id) }}
-          draft: false
-          prerelease: false
+          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: openwrt/bin
+
+      - name: Organize files
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload firmware directory
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+
+      # ===== [新增·J] Docker 编译：把 rootfs 封装成镜像，buildx + GHA 层缓存加速 =====
+      #   rootfs tar.gz 内容没变 -> ADD 层命中 gha 缓存秒过；这正是要加进来的「Docker 编译省时间」。
+      - name: Prepare Docker context
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        run: |
+          ROOTFS="$(find openwrt/bin/targets -name '*rootfs*.tar.gz' | head -n1)"
+          echo "找到 rootfs: ${ROOTFS:-无}"
+          mkdir -p $GITHUB_WORKSPACE/docker_ctx
+          if [ -n "$ROOTFS" ]; then cp "$ROOTFS" $GITHUB_WORKSPACE/docker_ctx/openwrt-rootfs.tar; fi
+
+      - name: Set up Docker Buildx
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push Docker image (GHA layer cache)
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ github.workspace }}/docker_ctx
+          file: ${{ github.workspace }}/SCRPTS/Dockerfile.firmware
+          push: true
+          tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Generate release tag
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "release_tag=$RELEASE_TAG-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          touch release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload firmware to release
+        uses: ncipollo/release-action@v1.14.0
+        if: steps.tag.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: ${{ steps.tag.outputs.release_tag }}
+          bodyFile: "release.txt"
+          artifacts: ${{ env.FIRMWARE }}/*
