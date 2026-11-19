@@ -48,7 +48,8 @@ jobs:
       - id: set-matrix
         run: |
           chmod +x scripts/build_matrix.sh
-          echo "matrix=$(scripts/build_matrix.sh | jq -c '.')" >> "$GITHUB_OUTPUT"
+          #echo "matrix=$(scripts/build_matrix.sh | jq -c '.')" >> "$GITHUB_OUTPUT"
+          printf "matrix=%s\n" "$(scripts/build_matrix.sh | jq -c '.')" >> "$GITHUB_OUTPUT"
 
   # ========== 第二步：并行编译所有目标设备 ==========
   build:
