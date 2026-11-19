@@ -1,243 +1,239 @@
-###############################################################################
-# OpenWrt 三层分级缓存编译工作流 —— 【填实可跑版 runnable】
+# ============================================================
+# Multi-Source Tiered Cache Build
+# 多源码三级缓存编译工作流（定稿版）
 #
-# 这一版把之前"占位"的 DEVICE / ARCH / TIER3_PATHS 全部换成真实三元组，
-# 并且按「设备型号」做成矩阵（include），一次触发即可并行编多款设备。
+# 缓存体系：
+#   Tier1 (dl)        - 源码包下载目录，通过 actions/cache 存储
+#   Tier2 (toolchain) - 交叉编译工具链，通过 actions/cache 存储
+#   Tier3 (target)    - 目标设备编译产物，通过 Docker 镜像存储到 GHCR
 #
-# 三个值现在到底是什么关系（这是本版的重点）：
-#   ARCH     = 宽泛体系结构标签(aarch64 / x86_64) —— 只用来给稳定层
-#              tier1(dl)/tier2(工具链)做缓存共享键：同 arch 的不同型号共用一份
-#              dl/工具链缓存键，命中率更高（就是"按 arch 合并 tier1"那条优化）。
-#   triplet  = 目标三元组，是目录名的一部分 —— build_dir/target-<triplet>
-#              必须填对，否则 tier3 命中"无可打包内容"被跳过、等于没生效。
-#   device   = 型号名，只进 tier3 的镜像名(...-pkgs-<平台>_<型号>)，
-#              让不同型号的易变缓存互不干扰。
-#
-# 怎么"开箱即用"：
-#   - 想编哪些就保留哪些 include 条目，删掉其余即可；只留一条就是单设备编译。
-#   - 想加新型号：抄一条 include，改 device / arch / triplet 三个值即可。
-#   - 配套脚本 scripts/cache_tiered.sh 原样即可，它完全靠 YAML 注入的 env 工作，不用改一行。
-###############################################################################
-name: Build_OpenWrt_TieredCache_Runnable带docker
+# 触发方式：手动触发（workflow_dispatch）
+# 数据来源：矩阵由 scripts/build_matrix.sh 动态生成，加设备只改脚本
+# ============================================================
+
+name: Multi-Source Tiered Cache Build
 
 on:
   workflow_dispatch:
     inputs:
-      source_code_platform:
-        description: '源码平台'
-        required: true
-        default: 'immortalwrt'
-        type: choice
-        options: [openwrt, immortalwrt, lede]
       force_rebuild:
-        description: '无视缓存纯净重编译'
+        description: '是否强制清理缓存重新编译（忽略所有缓存）'
         required: false
-        type: boolean
         default: false
+        type: boolean
+
+# 全局环境变量
+env:
+  WORKSPACE: /workdir                # 统一使用大磁盘挂载目录，避免 GitHub Runner 默认磁盘空间不足
+  UPLOAD_FIRMWARE: true              # 是否将固件上传到 Actions 产物
+  UPLOAD_RELEASE: true               # 编译完成后是否自动发布到 GitHub Release
 
 permissions:
-  contents: write   # checkout / 读写仓库
-  packages: write   # 关键：允许向 GHCR 推送 tier3 缓存镜像
-
-env:
-  CACHE_ROOT: /workdir
-  REPO_PREFIX: openwrt-tiered-cache
-  CHUNK_SIZE: 2000M
-  ZSTD_LEVEL: 10
-  # 工具链层目录与目标三元组无关（host/hostpkg 是"编固件前先造好的本机工具"），
-  # 因此这里写成全局固定值、各型号共用。
-  TIER2_PATHS: build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg
+  contents: write                    # 允许写入仓库内容（用于 Release 发布）
+  packages: write                    # 允许推送容器镜像到 GHCR
+  actions: write                     # 允许管理 Actions 缓存
 
 jobs:
+  # ========== 第一步：从脚本生成编译矩阵 ==========
+  generate-matrix:
+    runs-on: ubuntu-22.04
+    outputs:
+      # 将脚本输出的 JSON 数组作为矩阵数据传递给下游 job
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      # 签出仓库，获取 scripts/build_matrix.sh
+      - uses: actions/checkout@v4
+
+      # 执行脚本，将输出转为紧凑 JSON 格式，写入 GITHUB_OUTPUT
+      - id: set-matrix
+        run: |
+          chmod +x scripts/build_matrix.sh
+          echo "matrix=$(scripts/build_matrix.sh | jq -c '.')" >> "$GITHUB_OUTPUT"
+
+  # ========== 第二步：并行编译所有目标设备 ==========
   build:
-    runs-on: ubuntu-latest
-    # 一款失败不拖垮其它；想串行可把 fail-fast 设为 true
+    needs: generate-matrix           # 依赖上一步生成的矩阵数据
+    runs-on: ubuntu-22.04
     strategy:
-      fail-fast: false
-      matrix:
-        # ↓↓↓ 设备档案：删掉不要的条目即可；保留几条就并行编几条 ↓↓↓
-        include:
-          # RK3566/RK3568 系（R2S/R4S/R5S/R6S/R5C 等 radxa rockchip arm64 板）
-          # ARMv8.2 (Cortex-A55) —— rockchip/arm64 的 rk356x subtarget
-          - device: r5s
-            arch: aarch64
-            triplet: aarch64_cortex-a55
-            source_repo: https://github.com/immortalwrt/immortalwrt
-            branch: master
-            # 老 RK33xx(ARMv8.0 Cortex-A53, 如 r2pro/px30) 请把 triplet 改成 aarch64_cortex-a53
-
-          # x86 64 位软路由 / 虚拟机
-          - device: x86-64
-            arch: x86_64
-            triplet: x86_64
-            source_repo: https://github.com/immortalwrt/immortalwrt
-            branch: master
-
-          # x86 32 位
-          - device: x86-generic
-            arch: x86
-            triplet: i686
-            source_repo: https://github.com/immortalwrt/immortalwrt
-            branch: master
-
-          # 通用 aarch64 板（无特定 core 优化）
-          - device: aarch64-generic
-            arch: aarch64
-            triplet: aarch64_generic
-            source_repo: https://github.com/immortalwrt/immortalwrt
-            branch: master
-
-    name: Tiered-${{ inputs.source_code_platform }}-${{ matrix.device }}
-    env:
-      # 把矩阵里的"档案"透传给脚本：
-      #   ARCH 喂给稳定层共享键；DEVICE 喂给 tier3 镜像名；
-      #   TIER3_PATHS 用本设备真实三元组拼出 build_dir/target-* 路径。
-      SOURCE_CODE_PLATFORM: ${{ inputs.source_code_platform }}
-      DEVICE: ${{ matrix.device }}
-      ARCH: ${{ matrix.arch }}
-      TIER3_PATHS: build_dir/target-${{ matrix.triplet }} staging_dir/target-${{ matrix.triplet }}
+      fail-fast: false               # 一个设备编译失败，不中止其他设备的并行任务
+      max-parallel: 3                # 限制最大并行数，避免磁盘 IO 竞争
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ env.WORKSPACE }}
 
     steps:
-      # ---- 1. 空间三件套：迁 Docker data-root 到宽敞的 /workdir + 删 Runner 预装大件 ----
-      - name: Relocate Docker and Workspace
+      # Step 1: 迁移 Docker 数据目录并初始化大磁盘工作空间
+      # GitHub Runner 默认根分区空间有限（约 14GB），编译 OpenWrt 容易爆盘
+      # 将 Docker 数据目录迁移到 /workdir（通常有 80GB+ 可用空间）
+      - name: Relocate Docker & Workspace
         run: |
           sudo mkdir -p /workdir
-          sudo chown -R $USER:$GROUPS /workdir
-          echo '{"data-root":"/workdir/docker"}' | sudo tee /etc/docker/daemon.json
+          sudo chown runner:runner /workdir
+          echo "DOCKER_OPTS=--data-root /workdir/docker" | sudo tee -a /etc/default/docker
           sudo systemctl restart docker
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/lib/android || true
-          docker system prune -af || true
-          docker info | grep "Docker Root Dir"   # 验证 data-root 确实搬过去了
-          df -hT
+          # 等待 Docker 守护进程就绪，避免后续 login/build 失败
+          for i in $(seq 1 10); do
+            sudo docker info >/dev/null 2>&1 && break
+            sleep 2
+          done
+          echo "DISK_FREE_SPACE=$(df /workdir --output=avail -h | tail -1)" >> $GITHUB_ENV
 
-      # ---- 2. 登录 GHCR：push / pull tier3 镜像都需要它 ----
+      # Step 2: 登录 GitHub Container Registry (GHCR)
+      # 用于后续将 Tier3 编译产物打包为 Docker 镜像推送
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ github.token }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout
+      # Step 3: 签出配置仓库（包含 .config 配置文件和 Shell 脚本）
+      - name: Checkout Config & Scripts
         uses: actions/checkout@v4
+        with:
+          path: repo                 # 签出到 repo 子目录，避免和源码目录冲突
 
-      # ---- 3. 克隆源码并软链进工作区；顺手给缓存脚本加执行权限 ----
-      - name: Clone Source
-        working-directory: /workdir
+      # Step 4: 克隆目标固件源码
+      # 使用 --depth 1 浅克隆，节省时间和磁盘空间
+      - name: Clone Source (${{ matrix.name }})
         run: |
-          git clone -b ${{ matrix.branch }} --single-branch ${{ matrix.source_repo }} openwrt
-          ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered.sh
+          git clone --depth 1 -b ${{ matrix.REPO_BRANCH }} ${{ matrix.REPO_URL }} ${{ matrix.DEVICE }}
+          chmod +x repo/scripts/cache_tiered.sh
 
-      # ---- 4. 先算三层指纹：指纹进 cache key，决定"命中即零传输"能不能成立 ----
-      - name: Fingerprint Stable Tiers
-        id: fp
+      # Step 5: 计算第一层缓存（dl 源码包目录）的指纹
+      # 指纹基于 dl 目录下所有文件的文件名和大小生成，用于判断源码包是否有变化
+      - name: Fingerprint Tier1 (dl) - ${{ matrix.name }}
+        if: ${{ !inputs.force_rebuild }}
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh fp tier1
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh fp tier2
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh fp tier3
+          cd ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/dl
+          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh fp tier1
+        id: fp_tier1
 
-      # ---- 5. Actions Cache 还原 tier1(dl)：key 带 arch+指纹；同 arch 命中同一键=零传输 ----
-      - name: Restore tier1 dl from Actions Cache
+      # Step 6: 还原第一层缓存（dl 源码包）
+      # 如果指纹匹配，直接恢复之前下载的源码包，跳过重复下载
+      - name: Restore Tier1 Cache - ${{ matrix.name }}
+        if: ${{ !inputs.force_rebuild }}
         uses: actions/cache/restore@v4
         with:
-          path: /workdir/tiered/tier1
-          key: dl-${{ matrix.arch }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}
+          path: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/dl
+          key: dl-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-${{ steps.fp_tier1.outputs.fp_tier1 }}
           restore-keys: |
-            dl-${{ matrix.arch }}-${{ github.ref_name }}-
-            dl-${{ matrix.arch }}-
+            dl-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-
 
-      # ---- 6. 同理还原 tier2(工具链)，键也按 arch 共享 ----
-      - name: Restore tier2 toolchain from Actions Cache
+      # Step 7: 计算第二层缓存（交叉编译工具链）的指纹
+      # 指纹基于 host 工具链和 staging_dir/host 目录生成
+      - name: Fingerprint Tier2 (toolchain) - ${{ matrix.name }}
+        if: ${{ !inputs.force_rebuild }}
+        run: |
+          cd ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh fp tier2
+        id: fp_tier2
+
+      # Step 8: 还原第二层缓存（工具链）
+      # 恢复之前编译好的 host 工具和交叉编译工具链，避免重复编译
+      - name: Restore Tier2 Cache - ${{ matrix.name }}
+        if: ${{ !inputs.force_rebuild }}
         uses: actions/cache/restore@v4
         with:
-          path: /workdir/tiered/tier2
-          key: tc-${{ matrix.arch }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier2 }}
+          path: |
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/host
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/hostpkg
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/host
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/hostpkg
+          key: toolchain-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-${{ steps.fp_tier2.outputs.fp_tier2 }}
           restore-keys: |
-            tc-${{ matrix.arch }}-${{ github.ref_name }}-
-            tc-${{ matrix.arch }}-
+            toolchain-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-
 
-      # ---- 7. 逐层还原主逻辑：tier1/tier2 磁盘命中=零传输本地解压；
-      #      tier3 回落 GHCR docker cp 逐块取；force_rebuild=clean 全跳过。----
-      - name: Restore Cache per Tier
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
-
-      # ---- 8. 灌配置：把该平台设备的 .config 复制进去并 defconfig ----
-      - name: Make Defconfig
+      # Step 9: 还原自动编译进度标记 & 加载 .config 配置文件
+      # 先还原之前保存的编译进度（如果有），再覆盖项目的 .config 配置文件
+      # 最后执行 make defconfig 确保配置生效
+      - name: Restore Auto & Defconfig - ${{ matrix.name }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
         run: |
-          cd openwrt
-          CFG="../config/${{ inputs.source_code_platform }}_${{ matrix.device }}.config"
-          [ -f "$CFG" ] && cp "$CFG" .config
+          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh restore auto
+          cp ${{ env.WORKSPACE }}/repo/${{ matrix.CONFIG_FILE }} .config
           make defconfig
 
-      # ---- 9. 编 Base，编译前 touch marker —— gate 差量判定的"锚点"，
-      #      之后只有比 marker 更新的 stamp 才算"本轮真编过的包"。----
-      - name: Compile Base
-        id: base
+      # Step 10: 编译基础工具和交叉编译工具链
+      # 编译前创建一个时间戳标记文件，后续用于判断哪些文件是新编译产生的
+      - name: Compile Base & Tools - ${{ matrix.name }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
         run: |
-          touch /workdir/base_compilation_marker
-          cd openwrt
-          make tools/compile -j$(nproc)
-          make toolchain/compile -j$(nproc)
+          touch .compile_marker_base   # 建立基准时间标记，用于后续判断 Tier2/Tier3 变动
+          make tools/compile toolchain/compile -j$(nproc)
 
-      # ---- 10. 限时下载软件包源码：continue-on-error + timeout 防个别包卡死整轮 ----
-      - name: Download Packages
+      # Step 11: 提前下载所有软件包源码
+      # 使用 timeout 限制下载时间，避免网络问题导致长时间卡住
+      # continue-on-error: true 确保下载失败不中断编译流程
+      - name: Download Packages - ${{ matrix.name }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
         continue-on-error: true
-        run: cd openwrt && timeout 25m make package/download -j8
+        run: timeout 25m make download -j$(nproc) || true
 
-      # ---- 11. 编所有包 + 固件；第 3 次尝试(GHA 自动重试)加 V=s 输出详细日志 ----
-      - name: Compile Packages and Firmware
-        run: |
-          cd openwrt
-          V=""
-          if [ "${GITHUB_RUN_ATTEMPT}" = "3" ]; then V="V=s"; fi
-          make -j$(nproc) $V
+      # Step 12: 正式编译固件
+      # 先尝试普通编译，失败后自动切换 V=s 详细模式重新编译（便于排查问题）
+      - name: Compile Firmware - ${{ matrix.name }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+        run: make -j$(nproc) || make -j$(nproc) V=s
 
-      # ---- 12. gate 逐层判定变没变：tier2/tier3 各写独立输出，互不覆盖 ----
-      - name: Gate Tiers
-        id: gate
-        run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh gate tier2 /workdir/base_compilation_marker
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh gate tier3 /workdir/base_compilation_marker
+      # Step 13: 检测第二层（工具链）是否有变动
+      # 对比编译前后 staging_dir/host/stamp 目录的变化，判断工具链是否重新编译
+      - name: Gate Tier2 - ${{ matrix.name }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+        run: bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh gate tier2
+        id: gate_tier2
 
-      # ---- 13. tier2 变了才 repack（否则跳过，稳定层不重复打 tar）----
-      - name: Repack tier2 if Changed
-        if: steps.gate.outputs.changed_tier2 == '1'
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh pack tier2 /workdir/tiered/tier2
-
-      # ---- 14. 仅在 tier2 变化时存回 Actions Cache（用当前新指纹做 key，供下轮命中）----
-      - name: Save tier2 to Actions Cache
-        if: steps.gate.outputs.changed_tier2 == '1'
+      # Step 14: 如果第二层有变动，则保存新的工具链缓存
+      # 只有当工具链确实重新编译时，才更新缓存，避免无效写入
+      - name: Save Tier2 Cache - ${{ matrix.name }}
+        if: ${{ !inputs.force_rebuild && steps.gate_tier2.outputs.changed_tier2 != '0' }}
         uses: actions/cache/save@v4
         with:
-          path: /workdir/tiered/tier2
-          key: tc-${{ matrix.arch }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier2 }}
+          path: |
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/host
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/build_dir/hostpkg
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/host
+            ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/staging_dir/hostpkg
+          key: toolchain-${{ matrix.ARCH }}-${{ matrix.REPO_BRANCH }}-${{ steps.fp_tier2.outputs.fp_tier2 }}
 
-      # ---- 15. tier3 变了才打包并推 GHCR（digest 去重：只上传真正改过的分块）----
-      - name: Pack and Push tier3 if Changed
-        if: steps.gate.outputs.changed_tier3 == '1'
+      # Step 15: 检测第三层（目标设备编译产物）是否有变动
+      # 对比 build_dir/target-* 和 staging_dir/target-* 的 stamp 文件变化
+      - name: Gate Tier3 - ${{ matrix.name }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
+        run: bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh gate tier3
+        id: gate_tier3
+
+      # Step 16: 如果第三层有变动，则打包为 Docker 镜像推送到 GHCR
+      # 将目标设备的编译产物打包为镜像，作为 Tier3 缓存保存
+      - name: Pack & Push Tier3 - ${{ matrix.name }}
+        if: ${{ !inputs.force_rebuild && steps.gate_tier3.outputs.changed_tier3 != '0' }}
+        working-directory: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh pack tier3 /workdir/tiered/tier3
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered.sh image tier3
+          export ARCH="${{ matrix.ARCH }}"
+          export TIER3_IMAGE="ghcr.io/${{ github.repository }}/${{ matrix.DEVICE }}"
+          export GITHUB_REPOSITORY="${{ github.repository }}"
+          export GITHUB_SHA="${{ github.sha }}"
+          bash ${{ env.WORKSPACE }}/repo/scripts/cache_tiered.sh pack tier3
 
-      # ---- 16. 上传固件产物（bin/targets 下镜像/固件），保留 5 天 ----
-      - name: Upload Firmware Artifact
+      # Step 17: 将编译好的固件上传到 GitHub Actions 产物
+      # 保留 5 天，方便手动下载测试；如果没有生成固件文件则只警告不报错
+      - name: Upload Firmware Artifact - ${{ matrix.name }}
+        if: env.UPLOAD_FIRMWARE == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.source_code_platform }}_${{ matrix.device }}_firmware
-          path: openwrt/bin/targets/**/*
+          name: ${{ matrix.name }}-firmware
+          path: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/bin/targets/*/*/*
           retention-days: 5
+          if-no-files-found: warn
 
-###############################################################################
-# 如何确认 / 修正你自己的真实三元组（triplet）
-# -----------------------------------------------------------------------------
-# triplet 决定 build_dir/target-<triplet> 目录名，填错=该型号 tier3 缓存不生效。
-#   A) 编一次后看目录：ls openwrt/build_dir/ 里那串 target-xxxxx，去掉前缀即 triplet。
-#   B) 看源码 arch 模板 include/target.mk：
-#        ARM64_8CORES  -> aarch64_cortex-a53 (ARMv8.0, 如 RK33xx)
-#        ARM64_10CORES -> aarch64_cortex-a72
-#        ARM64_14CORES -> aarch64_cortex-a55 (ARMv8.2, 如 RK3566/RK3568 系 R5S/R6S)
-#        aarch64 通用   -> aarch64_generic    x86 64 -> x86_64    x86 32 -> i686
-#   C) 看产物名：bin/targets/<vendor>/<subtarget>/ 里的固件文件名含架构标识。
-# ARCH 永远填宽泛值(aarch64/x86_64/x86)，让同架构型号共用 dl/工具链稳定层缓存。
-###############################################################################
+      # Step 18: 发布固件到 GitHub Release
+      # 自动创建 Release 标签，将固件文件附加到 Release 页面供下载
+      - name: Publish GitHub Release - ${{ matrix.name }}
+        if: env.UPLOAD_RELEASE == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.WORKSPACE }}/${{ matrix.DEVICE }}/bin/targets/*/*/*
+          tag_name: ${{ matrix.RELEASE_TAG || format('{0}_{1}', matrix.DEVICE, github.run_id) }}
+          draft: false
+          prerelease: false
