@@ -136,13 +136,14 @@ jobs:
         run: |
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
-          ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+          #ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
 
       # --- 3. 配置和准备编译 ---
 
       # 步骤8：执行 DIY_P1_SH（通常是修改插件源 feeds.conf）
       - name: Load Custom Feeds (before cache key)
         run: |
+          ls
           [ -e files ] && cp -rf files/* openwrt/
           chmod +x $DIY_P1_SH
           cd openwrt
