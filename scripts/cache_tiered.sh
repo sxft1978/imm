@@ -1,246 +1,211 @@
 #!/bin/bash
-# ============================================================
-# cache_tiered.sh
-# 三级缓存管理脚本 —— 负责指纹计算、变动检测、镜像打包与还原
+###############################################################################
+# OpenWrt/ImmortalWrt 编译缓存 —— 三层分级版（tiered cache）· x86 适配增强版
 #
-# 三级缓存体系：
-#   Tier1 (dl)        : 源码包下载目录，变化最少，通过 actions/cache 存储
-#   Tier2 (toolchain) : 交叉编译工具链，架构+分支维度复用，通过 actions/cache 存储
-#   Tier3 (target)    : 目标设备编译产物，通过 Docker 镜像存储到 GHCR
+# 在你原有 workflow（单 job 编 x86 固件）里插桩使用，不改动你的源码树路径：
+#   SRC_DIR    = 你克隆出来的 openwrt（默认 $GITHUB_WORKSPACE/openwrt）
+#   CACHE_ROOT = 分块/marker 的暂存根目录（默认 $GITHUB_WORKSPACE/.cache_tiered）
 #
-# 用法：
-#   cache_tiered.sh fp tier1|tier2|tier3   # 计算指纹，输出到 GITHUB_OUTPUT
-#   cache_tiered.sh gate tier2|tier3       # 检测变动，输出 changed_tierN 到 GITHUB_OUTPUT
-#   cache_tiered.sh pack tier3             # 打包 Tier3 产物为 Docker 镜像并推送
-#   cache_tiered.sh restore auto           # 从 Tier3 镜像中还原编译进度
-# ============================================================
-
+# 三条腿走路，各用最适合它的后端：
+#   tier1 = dl/ + package/           源码包归档，几乎不变   -> Actions Cache
+#   tier2 = host/hostpkg/toolchain   编译工具链，较稳定     -> Actions Cache
+#   tier3 = target-* 目录(含 stamp)  目标软件包，最易变     -> GHCR 独立镜像(digest 去重)
+#
+# 本轮相对上一版的两处增强（专为「把你 x86 路径真正跑起来」）：
+#   1) 路径解析支持 glob：TIER3_PATHS 可写 `build_dir/target-x86_64_*` 这类通配，
+#      自动展开成磁盘上真实存在的目录（fp/gate/pack 统一走 resolve_paths）。
+#   2) tier3 指纹「按层 scope」：只对 tier3 自己的目录数 stamp，不再把工具链的
+#      stamp 也算进来，真正做到「只改了一个插件 -> 只点亮 tier3、tier2 指纹纹丝不动」。
+###############################################################################
 set -uo pipefail
 
-# ---------- 初始化环境变量 ----------
-# 工作目录，与 YAML 中 env.WORKSPACE 保持一致
-WORKSPACE=${WORKSPACE:-/workdir}
-# 当前源码目录名（即 DEVICE 值，通过 pwd 获取）
-SOURCE_DIR=$(basename "$(pwd)")
-# 目标架构标识，优先从环境变量 ARCH 传入（由矩阵提供），回退到默认值
-ARCH=${ARCH:-x86_64}
+# ---------------- 全局配置：env 优先、缺省兜底（workflow 用 env 注入即可，无需改脚本） ----------------
+SOURCE_CODE_PLATFORM="${SOURCE_CODE_PLATFORM:-immortalwrt}"
+DEVICE="${DEVICE:-xiaoyi_x86}"
+ARCH="${ARCH:-x86_64}"                              # 稳定层按 arch 跨设备共享同一缓存键
+REPO_PREFIX="${REPO_PREFIX:-openwrt-tiered-cache}"
+GHCR="ghcr.io/${GITHUB_REPOSITORY_OWNER:-unknown}/${REPO_PREFIX}"
+SRC_DIR="${SRC_DIR:-${GITHUB_WORKSPACE:-.}/openwrt}"
+CACHE_ROOT="${CACHE_ROOT:-${GITHUB_WORKSPACE:-.}/.cache_tiered}"
+CHUNK_SIZE="${CHUNK_SIZE:-2000M}"
+ZSTD_LEVEL="${ZSTD_LEVEL:-10}"
 
-# 源码根目录和缓存目录
-ROOT_DIR=$(pwd)
-CACHE_DIR="${WORKSPACE}/cache"
-mkdir -p "${CACHE_DIR}"
+# 工具链层（较稳定）：目录名固定，不含三元组。
+TIER2_PATHS="${TIER2_PATHS:-build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg}"
+# 目标包层（最易变）：目录名带「目标三元组」，x86 系列是 x86_64_*，用 glob 兜住完整后缀。
+TIER3_PATHS="${TIER3_PATHS:-build_dir/target-x86_64_* staging_dir/target-x86_64_*}"
 
-# ---------- 辅助函数 ----------
-
-# 计算当前目录下所有文件的 SHA-256 短指纹（16位）
-# 基于文件名+文件大小生成哈希，用于快速判断目录内容是否变化
-calc_fp() {
-  find . -not -path './.git/*' -type f -printf '%P %s\n' 2>/dev/null | sort | sha256sum | cut -c1-16
-}
-
-# 仅针对 stamp 目录计算指纹（用于判断 Tier3 变动）
-# stamp 文件记录了每个软件包的编译完成状态，是最精准的变动检测依据
-calc_fp_tier3() {
-  find ./build_dir/target-* ./staging_dir/target-* -path "*/stamp/*" -type f 2>/dev/null \
-    | xargs -r basename 2>/dev/null \
-    | sort \
-    | sha256sum \
-    | cut -c1-16
-}
-
-# ---------- 子命令实现 ----------
-
-# 1. fingerprint (fp) —— 计算指定层级的指纹并输出到 GITHUB_OUTPUT
-fingerprint() {
-  local tier=$1
-  local fp
-
-  if [ "$tier" = "tier1" ]; then
-    # Tier1: 进入 dl 目录计算源码包指纹
-    cd "${WORKSPACE}/${SOURCE_DIR}/dl"
-    fp=$(calc_fp)
-  elif [ "$tier" = "tier2" ]; then
-    # Tier2: 在源码根目录，计算 host 工具链相关目录的指纹
-    cd "${WORKSPACE}/${SOURCE_DIR}"
-    fp=$(find ./build_dir/host ./build_dir/hostpkg ./staging_dir/host ./staging_dir/hostpkg \
-          -type f -printf '%P %s\n' 2>/dev/null | sort | sha256sum | cut -c1-16)
-  elif [ "$tier" = "tier3" ]; then
-    # Tier3: 在源码根目录，计算目标设备 stamp 文件的指纹
-    cd "${WORKSPACE}/${SOURCE_DIR}"
-    fp=$(calc_fp_tier3)
-  fi
-
-  # 将指纹写入 GITHUB_OUTPUT，供后续步骤读取（key 命名）
-  echo "fp_${tier}=${fp}" >> "$GITHUB_OUTPUT"
-  echo "Fingerprint for ${tier}: ${fp}"
-}
-
-# 2. gate —— 检测指定层级是否有变动（通过 stamp 文件对比基准标记）
-gate() {
-  local tier=$1
-  local stamp_dir
-  # 基准时间标记文件，在编译工具链之前创建，用于区分新旧文件
-  local marker="${WORKSPACE}/${SOURCE_DIR}/.compile_marker_base"
-  local changed_count=0
-
-  # 如果没有基准标记（首次编译），直接返回 0（无变动）
-  if [ ! -f "$marker" ]; then
-    echo "changed_${tier}=0" >> "$GITHUB_OUTPUT"
-    exit 0
-  fi
-
-  # 根据层级确定要检测的 stamp 目录
-  if [ "$tier" = "tier2" ]; then
-    # Tier2 检测 host 工具链的 stamp
-    stamp_dir="${WORKSPACE}/${SOURCE_DIR}/staging_dir/host/stamp"
-  elif [ "$tier" = "tier3" ]; then
-    # Tier3 检测目标设备的 stamp
-    stamp_dir="${WORKSPACE}/${SOURCE_DIR}/build_dir/target-*/stamp"
-  fi
-
-  # 如果 stamp 目录存在，查找比基准标记更新的文件
-  if [ -d "$(dirname "${stamp_dir}")" ]; then
-    # 过滤掉编译过程中的噪声文件（锁文件、压缩临时文件等）
-    local IGNORE_PATTERN="\.flock|\.xz|\.zstd|\.patch|\.tools_compile|\.target_prereq|\.prepare|\.configure"
-    # 统计新增/更新的 stamp 文件数量（find 通配符不加引号以允许展开）
-    changed_count=$(find ${stamp_dir} -newer "$marker" -type f 2>/dev/null \
-      | grep -vE "${IGNORE_PATTERN}" 2>/dev/null \
-      | wc -l)
-  fi
-
-  # 将变动数量写入 GITHUB_OUTPUT
-  echo "changed_${tier}=${changed_count}" >> "$GITHUB_OUTPUT"
-
-  if [ "$changed_count" -gt 0 ]; then
-    echo "Tier ${tier} has ${changed_count} changed stamp(s) - will update cache"
-  else
-    echo "Tier ${tier} unchanged - skip cache save"
-  fi
-}
-
-# 3. pack —— 将 Tier3 编译产物打包为 Docker 镜像推送到 GHCR
-pack() {
-  local tier=$1
-  if [ "$tier" != "tier3" ]; then
-    echo "pack only supports tier3" >&2
-    exit 1
-  fi
-
-  cd "${WORKSPACE}/${SOURCE_DIR}"
-
-  # 从环境变量或矩阵中读取镜像标识，回退到源码目录名
-  local IMAGE="${TIER3_IMAGE:-ghcr.io/${GITHUB_REPOSITORY:-immortalwrt-cache}/${SOURCE_DIR}}"
-  # 用当前提交 SHA 作为镜像标签，确保可追溯
-  local TAG="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo latest)}"
-
-  # 打包编译产物目录（bin/packages 和 staging_dir/target-* 下的产物）
-  # 这样下次恢复后，已编译的 .ipk 可以直接复用，make 会跳过这些包
-  local TMPDIR
-  TMPDIR=$(mktemp -d)
-
-  # 复制 bin/packages 目录（包含所有编译好的 .ipk 包）
-  if [ -d "./bin/packages" ]; then
-    cp -a ./bin/packages "${TMPDIR}/bin_packages"
-  fi
-
-  # 复制 staging_dir/target-* 下的关键产物（头文件、库文件等）
-  for target_dir in ./staging_dir/target-*; do
-    if [ -d "$target_dir" ]; then
-      local target_name
-      target_name=$(basename "$target_dir")
-      mkdir -p "${TMPDIR}/staging_dir/${target_name}"
-      # 只复制 stamp、usr、lib、include 等关键子目录，避免体积过大
-      for subdir in stamp usr lib include; do
-        if [ -d "${target_dir}/${subdir}" ]; then
-          cp -a "${target_dir}/${subdir}" "${TMPDIR}/staging_dir/${target_name}/"
-        fi
-      done
-    fi
-  done
-
-  # 构建 Dockerfile，将产物目录打包进镜像
-  cat > "${TMPDIR}/Dockerfile" <<'DOCKERFILE'
-FROM scratch
-COPY bin_packages /bin_packages
-COPY staging_dir /staging_dir
-DOCKERFILE
-
-  echo "Packing Tier3 image: ${IMAGE}:${TAG}"
-  docker build -t "${IMAGE}:${TAG}" "${TMPDIR}"
-
-  # 推送镜像到 GHCR
-  docker push "${IMAGE}:${TAG}"
-
-  # 同时打 latest 标签，方便后续 pull 回退
-  docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
-  docker push "${IMAGE}:latest"
-
-  rm -rf "${TMPDIR}"
-  echo "Tier3 image pushed: ${IMAGE}:${TAG}"
-}
-
-# 4. restore —— 还原自动编译进度（从 Tier3 镜像中恢复产物）
-restore() {
-  local mode=$1
-  if [ "$mode" != "auto" ]; then
-    echo "restore only supports 'auto' mode" >&2
-    exit 1
-  fi
-
-  cd "${WORKSPACE}/${SOURCE_DIR}"
-
-  # 尝试从 Tier3 镜像中恢复编译产物
-  local IMAGE="${TIER3_IMAGE:-ghcr.io/${GITHUB_REPOSITORY:-immortalwrt-cache}/${SOURCE_DIR}}"
-  local TAG="${GITHUB_SHA:-latest}"
-
-  # 先尝试拉取当前 SHA 标签的镜像，失败则回退到 latest
-  if ! docker pull "${IMAGE}:${TAG}" 2>/dev/null; then
-    echo "Tier3 image ${TAG} not found, trying latest..."
-    docker pull "${IMAGE}:latest" 2>/dev/null || {
-      echo "No Tier3 image available, skipping restore"
-      return 0
-    }
-    TAG="latest"
-  fi
-
-  # 从镜像中提取产物文件到对应目录
-  local TMPDIR
-  TMPDIR=$(mktemp -d)
-  docker create --name cache_extract "${IMAGE}:${TAG}" >/dev/null 2>&1
-  docker cp cache_extract:/bin_packages "${TMPDIR}/bin_packages" 2>/dev/null || true
-  docker cp cache_extract:/staging_dir "${TMPDIR}/staging_dir" 2>/dev/null || true
-  docker rm cache_extract >/dev/null 2>&1
-
-  # 将 bin/packages 还原到对应位置
-  if [ -d "${TMPDIR}/bin_packages" ]; then
-    mkdir -p ./bin/packages
-    cp -a "${TMPDIR}/bin_packages"/* ./bin/packages/ 2>/dev/null || true
-  fi
-
-  # 将 staging_dir/target-* 还原到对应位置
-  if [ -d "${TMPDIR}/staging_dir" ]; then
-    for target_dir in "${TMPDIR}/staging_dir"/*; do
-      if [ -d "$target_dir" ]; then
-        local target_name
-        target_name=$(basename "$target_dir")
-        mkdir -p "./staging_dir/${target_name}"
-        cp -a "${target_dir}"/* "./staging_dir/${target_name}/" 2>/dev/null || true
-      fi
+# ---------------------------------------------------------------------------
+# resolve_paths <目录模板串>：把「空格分隔的相对路径 / glob」展开成 SRC_DIR 下
+#   真实存在的「相对路径」列表（空格分隔）。glob 命中不到时该项自然被丢弃。
+#   这是本轮新增的核心零件：fp/gate/pack 全部复用它，对 x86 通配同样有效。
+# ---------------------------------------------------------------------------
+resolve_paths() {
+    local out=""
+    for pat in $1; do
+        for p in "$SRC_DIR"/$pat; do
+            [ -e "$p" ] && out="$out ${p#"$SRC_DIR"/}"
+        done
     done
-  fi
-
-  rm -rf "${TMPDIR}"
-  echo "Tier3 products restored from ${IMAGE}:${TAG}"
+    echo "$out"
 }
 
-# ---------- 主入口 ----------
-case "${1:-}" in
-  fp)       fingerprint "$2" ;;
-  gate)     gate "$2" ;;
-  pack)     pack "$2" ;;
-  restore)  restore "$2" ;;
-  *)
-    echo "Usage: $0 {fp|gate|pack|restore} {tier1|tier2|tier3|auto}" >&2
-    exit 1
-    ;;
+# ---------------- 层 -> 目录模板（原始，可能含 glob，交给 resolve_paths 展开） ----------------
+tier_paths() {
+    case "$1" in
+        tier1) echo "dl package" ;;
+        tier2) echo "$TIER2_PATHS" ;;
+        tier3) echo "$TIER3_PATHS" ;;
+        *) echo "" ; return 1 ;;
+    esac
+}
+
+# ---------------- 层 -> GHCR 镜像名（tier3 才真正用到） ----------------
+tier_image() {
+    case "$1" in
+        tier1) echo "${GHCR}-dl-${ARCH}:latest" ;;
+        tier2) echo "${GHCR}-toolchain-${ARCH}:latest" ;;
+        tier3) echo "${GHCR}-pkgs-${SOURCE_CODE_PLATFORM}_${DEVICE}:latest" ;;
+        *) echo "" ; return 1 ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# 内容指纹：决定「要不要重传」的钥匙
+#   tier3：只对本层 resolve 后的目录下 */stamp/* 文件名算摘要（按层 scope）。
+#   tier1/tier2：用「相对路径|字节大小」清单算摘要。
+# ---------------------------------------------------------------------------
+fingerprint() {
+    tier="$1"
+    [ -d "$SRC_DIR" ] || { echo "none"; return 1; }
+    resolved="$(resolve_paths "$(tier_paths "$tier")")"
+    if [ -z "$resolved" ]; then echo "empty"; return 1; fi
+    if [ "$tier" = "tier3" ]; then
+        for d in $resolved; do
+            [ -d "$SRC_DIR/$d" ] && find "$SRC_DIR/$d" -path '*/stamp/*' -type f 2>/dev/null
+        done | LC_ALL=C sort | sed "s#^$SRC_DIR/##" | sha256sum | awk '{print substr($1,1,16)}'
+    else
+        for d in $resolved; do
+            [ -d "$SRC_DIR/$d" ] && find "$SRC_DIR/$d" -printf '%P|%s\n' 2>/dev/null
+        done | LC_ALL=C sort | sha256sum | awk '{print substr($1,1,16)}'
+    fi
+}
+
+# 写 key=value 进 $GITHUB_OUTPUT；本地调试时该变量为空则跳过、仅 print。
+out_kv() { if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "$1=$2" >> "$GITHUB_OUTPUT"; fi; }
+
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+case "$cmd" in
+
+    # ====================== 计算指纹（供 cache key 使用） ======================
+    fp)
+        tier="${1:-tier1}"
+        v="$(fingerprint "$tier")"
+        echo "fp_${tier}=${v}"
+        out_kv "fp_${tier}" "$v"
+        ;;
+
+    # ====================== 本层自锚点后是否真的变了 ======================
+    gate)
+        tier="${1:-tier3}"
+        marker="${2:-$CACHE_ROOT/base_compilation_marker}"
+        if [ ! -f "$marker" ]; then
+            echo "changed=1"; out_kv "changed" 1; out_kv "changed_${tier}" 1; exit 0
+        fi
+        noise='\.zstd$|\.flock$|\.libdeflate$|\.pkgconf$|\.xz$|\.tar$|\.patch$|\.m4_|\.tools_compile_|\.target_prereq|\.prepared'
+        roots=()
+        for d in $(resolve_paths "$(tier_paths "$tier")"); do roots+=("$SRC_DIR/$d"); done
+        n=0
+        if [ ${#roots[@]} -gt 0 ]; then
+            n=$(find "${roots[@]}" -newer "$marker" -path '*/stamp/*' -type f 2>/dev/null | grep -Ev "$noise" | wc -l | tr -d ' ')
+        fi
+        c=0; [ "${n:-0}" -gt 0 ] && c=1
+        echo "changed_stamp=${n:-0}"; echo "changed=$c"
+        out_kv "changed" "$c"; out_kv "changed_${tier}" "$c"
+        ;;
+
+    # ====================== 打包 + 分块 ======================
+    pack)
+        tier="${1:?missing tier}"
+        out_dir="${2:-$CACHE_ROOT/tiered/$tier}"
+        real="$(resolve_paths "$(tier_paths "$tier")")"
+        [ -z "$real" ] && { echo "!! $tier 无可打包内容（glob 未命中，检查 TIER3_PATHS/TIER2_PATHS）"; exit 0; }
+        mkdir -p "$out_dir"
+        rm -f "$out_dir/${tier}_raw_"* "$out_dir/${tier}.tar"
+        ( cd "$SRC_DIR" && tar -I "zstd -T0 -${ZSTD_LEVEL}" -cf "$out_dir/${tier}.tar" $real ) 2>/dev/null
+        [ -f "$out_dir/${tier}.tar" ] || { echo "!! $tier 无可打包内容"; exit 0; }
+        split -a 3 -d -b "$CHUNK_SIZE" "$out_dir/${tier}.tar" "$out_dir/${tier}_raw_"
+        rm -f "$out_dir/${tier}.tar"
+        fingerprint "$tier" > "$out_dir/${tier}.fp"
+        blocks=$(ls "$out_dir" | grep -c "${tier}_raw_" || true)
+        echo "[OK] $tier 打包完成：${blocks} 个分块，指纹 $(cat "$out_dir/${tier}.fp")"
+        du -sh "$out_dir" 2>/dev/null || true
+        ;;
+
+    # ====================== 构建并推送本层独立镜像（tier3 常用） ======================
+    image)
+        tier="${1:?missing tier}"
+        dir="$CACHE_ROOT/tiered/$tier"
+        img="$(tier_image "$tier")"
+        ls "$dir"/${tier}_raw_* >/dev/null 2>&1 || { echo "-- $tier 无分块，跳过推送"; exit 0; }
+        {
+            echo "FROM scratch"
+            for f in "$dir"/${tier}_raw_*; do
+                name="$(basename "$f")"
+                printf 'COPY %s /%s\n' "$name" "$name"
+            done
+            echo "LABEL io.openwrtcache.tier=${tier}"
+            echo "LABEL io.openwrtcache.fp=$(cat "$dir/${tier}.fp" 2>/dev/null || echo none)"
+        } > "$dir/Dockerfile"
+        echo "==> 推送 $img"
+        if docker build -q -t "$img" -f "$dir/Dockerfile" "$dir" && docker push "$img"; then
+            echo "[OK] $tier 已推送 $img"
+        else
+            echo "!! $tier 推送失败"; rm -f "$dir/Dockerfile"; exit 1
+        fi
+        rm -f "$dir/Dockerfile"
+        ;;
+
+    # ====================== 从磁盘分块还原某层（本地测试入口） ======================
+    unpack)
+        tier="${1:?missing tier}"
+        src="${2:-$CACHE_ROOT/tiered/$tier}"
+        shopt -s nullglob; parts=("$src"/${tier}_raw_*); shopt -u nullglob
+        [ ${#parts[@]} -eq 0 ] && { echo "-- $tier 无缓存"; exit 0; }
+        if cat "${parts[@]}" | tar -I "zstd -T0" -xf - -C "$SRC_DIR"; then
+            echo "[OK] $tier 还原 ${#parts[@]} 块"
+        else
+            echo "!! $tier 还原失败"
+        fi
+        ;;
+
+    # ====================== 编译前逐层还原（缓存命中主入口） ======================
+    restore)
+        mode="${1:-auto}"
+        for tier in tier1 tier2 tier3; do
+            dir="$CACHE_ROOT/tiered/$tier"; mkdir -p "$dir"
+            if ls "$dir"/${tier}_raw_* >/dev/null 2>&1; then
+                echo "== $tier 已由 Actions Cache 命中，零传输"
+                cat "$dir"/${tier}_raw_* | tar -I "zstd -T0" -xf - -C "$SRC_DIR" || true
+                continue
+            fi
+            if [ "$mode" = "clean" ]; then echo "-- $tier force_rebuild，跳过还原"; continue; fi
+            [ "$tier" != "tier3" ] && { echo "-- $tier 依赖 Actions Cache，本轮未命中，走纯净编译"; continue; }
+            img="$(tier_image "$tier")"
+            docker pull "$img" >/dev/null 2>&1 || { echo "-- $tier 无镜像缓存，本轮走纯净编译"; continue; }
+            cid="$(docker create "$img" /bin/true)"
+            for f in $(docker run --rm --entrypoint ls "$img" / 2>/dev/null | grep "${tier}_raw_" || true); do
+                docker cp "$cid":/"$f" "$dir/$f" || true
+            done
+            docker rm -f "$cid" >/dev/null 2>&1 || true
+            docker rmi "$img" >/dev/null 2>&1 || true
+            ls "$dir"/${tier}_raw_* >/dev/null 2>&1 || { echo "-- $tier 镜像内无内容"; continue; }
+            cat "$dir"/${tier}_raw_* | tar -I "zstd -T0" -xf - -C "$SRC_DIR" || true
+            echo "[OK] $tier 已从 GHCR 还原"
+        done
+        df -hT | tail -n +2 || true
+        ;;
+
+    *)
+        echo "用法: cache_tiered_x86.sh {fp|gate|pack|image|unpack|restore} [tier] [dir]"; exit 2 ;;
 esac
