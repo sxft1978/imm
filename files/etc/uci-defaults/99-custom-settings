@@ -1,20 +1,29 @@
 #!/bin/sh
-# 仓库路径：files/etc/uci-defaults/99-custom-settings
-# 作用：固件第一次启动时，修改软件源为中科大 + 修改LAN口IP和网关
+# 仓库路径: files/etc/uci-defaults/99-custom-settings
+# 作用: 固件第一次启动时，修改软件源为中科大 + 修改LAN口IP和网关
 
-# ========== 修改软件源为中科大 ==========
-APK_CONF="/etc/apk/repositories.d/distfeeds.list"
 IMMORTALWRT_MIRROR="https://mirrors.ustc.edu.cn/immortalwrt"
 
+# ========= 1. customfeeds.list 直接写入（严格按图片7行）=========
+cat > "/etc/apk/repositories.d/customfeeds.list" <<EOF
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/targets/x86/64/packages/packages.adb
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/base/packages.adb
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/luci/packages.adb
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/packages/packages.adb
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/routing/packages.adb
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/telephony/packages.adb
+https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/video/packages.adb
+EOF
+
+# ========= 2. distfeeds.list 用 sed 全局替换 =========
+APK_CONF="/etc/apk/repositories.d/distfeeds.list"
+
 if [ -f "$APK_CONF" ]; then
-    sed -i \
-        -e "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" \
-        -e "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" \
-        "$APK_CONF"
+    sed -i "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
+    sed -i "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
 fi
 
-#
-
+# ========= 3. 修改 LAN 口 IP 和网关 =========
 uci set network.lan.ipaddr='192.168.1.129/24'
 uci set network.lan.gateway='192.168.1.1'
 uci set network.lan.dns='192.168.1.1'
