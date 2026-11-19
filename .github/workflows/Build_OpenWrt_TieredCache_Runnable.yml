@@ -339,7 +339,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ github.workspace }}/docker_ctx
-          file: ${{ github.workspace }}/SCRPTS/Dockerfile.firmware
+          file: ${{ github.workspace }}/scripts/Dockerfile.firmware
           push: true
           tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
           cache-from: type=gha
