@@ -24,7 +24,8 @@ if [ -f "$APK_CONF" ]; then
 fi
 
 # ========= 3. 修改 LAN 口 IP 和网关 =========
-uci set network.lan.ipaddr='192.168.1.129/24'
+uci set network.lan.ipaddr='192.168.1.129'
+uci set network.lan.netmask='255.255.255.0'
 uci set network.lan.gateway='192.168.1.1'
 uci set network.lan.dns='192.168.1.1'
 uci commit network
