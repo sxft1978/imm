@@ -18,10 +18,20 @@ EOF
 # ========= 2. distfeeds.list 用 sed 全局替换 =========
 APK_CONF="/etc/apk/repositories.d/distfeeds.list"
 
-if [ -f "$APK_CONF" ]; then
+cat > "/etc/apk/repositories.d/distfeeds.list" <<EOF
+https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/base/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/luci/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/packages/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/routing/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/telephony/packages.adb
+https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
+EOF
+
+# if [ -f "$APK_CONF" ]; then
    # sed -i "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
-    sed -i "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
-fi
+ #    sed -i "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
+# fi
 
 # ========= 3. 修改 LAN 口 IP 和网关 =========
 uci set network.lan.ipaddr='192.168.1.129'
