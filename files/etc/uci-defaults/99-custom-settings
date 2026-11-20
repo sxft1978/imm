@@ -16,7 +16,7 @@ https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
 EOF
 
 # ========= 2. distfeeds.list 用 sed 全局替换 =========
-APK_CONF="/etc/apk/repositories.d/distfeeds.list"
+# APK_CONF="/etc/apk/repositories.d/distfeeds.list"
 
 cat > "/etc/apk/repositories.d/distfeeds.list" <<EOF
 https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
