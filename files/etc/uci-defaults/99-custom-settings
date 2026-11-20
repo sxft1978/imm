@@ -6,13 +6,13 @@ IMMORTALWRT_MIRROR="https://mirrors.ustc.edu.cn/immortalwrt"
 
 # ========= 1. customfeeds.list 直接写入（严格按图片7行）=========
 cat > "/etc/apk/repositories.d/customfeeds.list" <<EOF
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/targets/x86/64/packages/packages.adb
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/base/packages.adb
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/luci/packages.adb
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/packages/packages.adb
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/routing/packages.adb
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/telephony/packages.adb
-https://mirrors.ustc.edu.cn/immortalwrt/snapshots/packages/x86_64/video/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/base/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/luci/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/packages/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/routing/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/telephony/packages.adb
+https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
 EOF
 
 # ========= 2. distfeeds.list 用 sed 全局替换 =========
