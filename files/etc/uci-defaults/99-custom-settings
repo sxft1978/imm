@@ -28,7 +28,12 @@ https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/telephony/packages.a
 https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
 EOF
 
-apk update
+if [ -f "/etc/apk/repositories.d/distfeeds.list" ]; then
+    apk update
+
+elif [ -f "/etc/opkg/distfeeds.conf" ]; then
+    opkg update
+fi
 
 # if [ -f "$APK_CONF" ]; then
    # sed -i "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
