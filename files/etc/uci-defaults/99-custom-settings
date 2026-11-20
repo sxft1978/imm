@@ -19,7 +19,7 @@ EOF
 APK_CONF="/etc/apk/repositories.d/distfeeds.list"
 
 if [ -f "$APK_CONF" ]; then
-    sed -i "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
+   # sed -i "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
     sed -i "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
 fi
 
