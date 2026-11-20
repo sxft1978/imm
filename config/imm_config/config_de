@@ -1,4 +1,7 @@
-首先要选中默认设置 d-setting
+首先要选中默认设置luci default-settings   default-settings-CHN
+NETWORK SSH OPENSSH-SERVER   OPENSSH-CLIENT
+luci modules    luci-base   luci-admin-full    luci-mod-sys
+luci modules   translation  找中文
 CONFIG_DEFAULT_luci-app-package-manager=y
 CONFIG_PACKAGE_luci-app-accesspolicycontroller=y
 CONFIG_PACKAGE_luci-app-acme=y
@@ -100,6 +103,5 @@ CONFIG_PACKAGE_luci-app-wechatpush=y
 CONFIG_PACKAGE_luci-app-wol=y
 CONFIG_PACKAGE_luci-app-zerotier=y
 
-luci modules    luci-base   luci-admin-full    luci-mod-sys
-luci modules   translation  找中文
+
 
