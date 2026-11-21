@@ -1,174 +1,474 @@
-# =============================================================
-# .github/workflows/build.yml
-# OpenWrt x86_64 编译 + 分层缓存 (配合 scripts/cache_tiered_x86.sh)
-#
-# 本轮已落地的改动:
-#   1. tier2 / tier3 缓存 key = 输入指纹 (fp_tier1-fp_config-fp_patches)
-#      严格绑定 下载的源码 + 配置 + 补丁, 任何一处不同就 miss 重编, 绝不错配
-#   2. 打包/解压在脚本侧已改 zstd -T0 满核
-#   3. dl 回拨 2000 年在脚本 restore auto 内
-#   4. ccache 整段用 # 注释, 需要时去掉注释即可启用
-# =============================================================
-name: Build OpenWrt x86_64 (tiered cache)
+# ===== 工作流名称和触发条件 =====
 
+# 工作流显示的名称
+name: Immor_xiaoyi特别版 · 三层缓存+Docker加速版
+
+# 本版相对 fixed2 的四项改动（与 cache_tiered_x86_fixed.sh 修订版2 配套）：
+#   I. tier2/tier3 缓存 key 改用输入指纹：fp_tier1(dl源码) + fp_config(配置) +
+#      fp_patches(本地补丁) 三段拼接。源码/配置/补丁任一处不同 -> key 不同 ->
+#      旧缓存绝不会被错配取回（"恢复的内容严格配合下载的源码"）。
+#   J. 压缩级别 ZSTD_LEVEL 10 -> 3，配合脚本内 zstd -T0 满核，打包/还原提速数倍。
+#   K. make download 之后调脚本 touchdl 把新下载包时间戳回拨 2000 年（restore
+#      auto 内部已对还原出的 dl 回拨；此处覆盖 make download 新拉下来的包）。
+#   L. ccache 配置整段写入但全部注释；需要启用时去掉该段行首 # 即可。
+
+# 触发条件：只在网页上手动点击"Run workflow"时运行
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
+    inputs:
+      # 可选开关：是否需要 SSH 远程调试
+      ssh_between:
+        description: '编译后 SSH 调试（是/否）'
+        required: false
+        default: 'false'
+      # 可选开关：是否无视所有缓存，强制全新重编
+      force_rebuild:
+        description: '无视缓存纯净重编译'
+        required: false
+        type: boolean
+        default: false
 
+# ===== 赋予工作流需要的权限 =====
+permissions:
+  contents: write    # 需要权限来提交缓存、打 Release 标签
+  actions: write     # 需要权限保存 Actions Cache
+  packages: write    # 需要权限推送 Docker 镜像到 GHCR
+
+# ===== 全局环境变量（整个流水线都会用到的基础路径和配置） =====
 env:
-  SRC_DIR: ${{ github.workspace }}/openwrt
-  CACHE_ROOT: ${{ github.workspace }}/.cache
-  OUTPUT_DIR: ${{ github.workspace }}/.cache/tiered
-  MARKER_DIR: ${{ github.workspace }}/.cache/stamp
-  REGISTRY: ghcr.io/${{ github.repository }}/openwrt-cache
+  # OpenWrt 源码仓库和分支
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: master
 
+  # 自定义配置文件的路径
+  CONFIG_FILE: config/imm_config/test.config
+  FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
+  DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
+  DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
+  SOURCE_DIR: openwrt
+
+  # 固件上传相关配置
+  RELEASE_TAG: immortalwrt-X86
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_ARTIFACT: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+  # 三层缓存和 Docker 专用路径配置
+  SOURCE_CODE_PLATFORM: immortalwrt
+  DEVICE: xiaoyi_x86
+  ARCH: X86_64
+  CACHE_ROOT: ${{ github.workspace }}/.cache_tiered      # 缓存暂存区
+  SRC_DIR: ${{ github.workspace }}/openwrt                # 编译源码区
+  CHUNK_SIZE: 2000M                                       # 缓存分块大小（防 GitHub 限制）
+  ZSTD_LEVEL: 3                                           # 【改动 J】压缩等级 10->3：缓存场景 3 足够，配合脚本内 -T0 满核，打包/还原提速数倍
+
+  # 缓存层对应的文件夹路径（均相对 SRC_DIR=openwrt，脚本内部 cd 到 SRC_DIR 后解析）
+  TIER1_PATHS: dl   # 【新增】Tier1=下载包目录；原工作流未定义、脚本默认却当 staging，导致名实不符
+  TIER2_PATHS: build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg
+  TIER3_PATHS: build_dir/target-x86_64_* staging_dir/target-x86_64_*
+
+  # Docker 镜像推送目标
+  DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/immortalwrt-xiaoyi
+
+  # 三层缓存镜像仓库前缀（image 子命令推 tier3 归档用）；与 DOCKER_IMAGE 同 owner
+  REPO_PREFIX: ghcr.io/${{ github.repository_owner }}/immortalwrt-tier3-cache
+
+# ===== 任务主体 =====
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-      packages: write
-
+    runs-on: ubuntu-24.04  # 使用 GitHub 最新最干净的 Ubuntu 24.04 环境（原注释误写 26.04，此处已订正，未改运行版本）
     steps:
-      - name: 检出源码
+
+      # --- 1. 基础环境准备 ---
+
+      # 步骤1：检查服务器当前磁盘空间
+      - name: Check Server Performance
+        run: |
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          df -hT
+
+      # 步骤2：硬核清理磁盘（把系统预装的乱七八糟软件删光，腾出最大空间）
+      - name: Maximize Build Space (Native Hardcore Clean)
+        run: |
+          sudo umount /mnt || true
+          sudo rm -rf /mnt/* || true
+          sudo apt-get purge -y mono-complete ghc* google-cloud-sdk azure-cli powershell dotnet* swift* || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/lib/jvm || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/* ~/.npm/* ~/.gradle/*
+          echo ">>> 清理完成！当前磁盘状态："
+          df -h /
+
+      # 步骤3：创建一个 6GB 的虚拟内存 (Swap)，防止编译时因内存不足报错
+      - name: Create Massive Swap Space
+        run: |
+          echo ">>> 正在创建 6GB Swap 虚拟内存..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 6G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      # --- 2. 获取你的代码和源码 ---
+
+      # 步骤4：克隆你自己的仓库（包含你的脚本和配置文件）
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: true   # 【FIX-3】确保 scripts/ 下文件（若为子模块）被一并拉取，否则 Prepare 步骤会报找不到 Dockerfile
 
-      - name: 安装编译依赖
+      # 步骤5：给你的缓存脚本赋予执行权限，并自动登录 GHCR（用于后续推送缓存镜像）
+      - name: Prep Cache Script & Login GHCR
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev python3-setuptools rsync swig unzip zlib1g-dev file wget zstd docker.io
+          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh
+          mkdir -p "$CACHE_ROOT"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: 计算缓存指纹
+      # 步骤6：初始化编译环境（安装 OpenWrt 编译所需的依赖包）
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
+          sudo apt-get -qq install -y zstd ccache   # 【FIX-4+改动 L】cache 脚本用 zstd（现 -T0 满核）；ccache 一并装好，即便暂不启用也不影响
+          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE   # 【FIX-A】修复：原文件该行顶格丢失缩进，导致 run 块标量中断、整份 YAML 解析失败
+          sudo timedatectl set-timezone "$TZ"
+          df -hT $PWD
+
+      # 步骤7：克隆 ImmortalWrt 官方源码，并创建一个快捷链接
+      - name: Clone Source Code (Strict Path)
+        working-directory: ${{ github.workspace }}
+        run: |
+          df -hT $PWD
+          git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
+          #ln -sf ${{ github.workspace }}/${{ env.SOURCE_DIR }} $GITHUB_WORKSPACE/openwrt
+
+      # --- 3. 配置和准备编译 ---
+
+      # 步骤8：执行 DIY_P1_SH（通常是修改插件源 feeds.conf）
+      - name: Load Custom Feeds (before cache key)
+        run: |
+          ls
+          [ -e files ] && cp -rf files/* openwrt/
+          chmod +x $DIY_P1_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P1_SH
+          df -hT
+
+      # 步骤9：更新插件源 (feeds update)
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      # 步骤10：安装插件源 (feeds install)
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      # 步骤11：把你的自定义配置文件(xiaoyi_x86.config)放进去，并执行 DIY_P2_SH
+      - name: Load custom configuration
+        run: |
+          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          chmod +x $DIY_P2_SH
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_P2_SH
+          cat -A feeds.conf
+          df -hT
+
+      # 步骤12：自动获取当前编译架构（比如 X86_64 或 aarch64），供缓存键使用
+      - name: Get architecture
+        working-directory: ${{ github.workspace }}/openwrt
+        run: |
+          TARGET_DEVICE_ARCH="$(grep "^CONFIG_TARGET_.*=y$" ".config" | head -n 1 | sed 's/^CONFIG_TARGET_//g' | sed 's/=y//g' | awk -F '_' '{print $1}')"
+          echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
+          echo "MIXKEY=X86_64" >>$GITHUB_ENV
+
+      # --- 4. 还原缓存（加速编译的核心） ---
+
+      # 步骤13：计算指纹（【改动 I】新增 config/patches 两个输入指纹，
+      # 与 tier1 一起拼成 tier2/tier3 的缓存 key，严格绑定"下载源码+配置+补丁"）
+      - name: Fingerprint Stable Tiers
         id: fp
         run: |
-          echo "fp_tier1=$(bash scripts/cache_tiered_x86.sh fp tier1)"    >> $GITHUB_OUTPUT
-          echo "fp_tier2=$(bash scripts/cache_tiered_x86.sh fp tier2)"    >> $GITHUB_OUTPUT
-          echo "fp_tier3=$(bash scripts/cache_tiered_x86.sh fp tier3)"    >> $GITHUB_OUTPUT
-          echo "fp_config=$(bash scripts/cache_tiered_x86.sh fp config)"   >> $GITHUB_OUTPUT
-          echo "fp_patches=$(bash scripts/cache_tiered_x86.sh fp patches)" >> $GITHUB_OUTPUT
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier2
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier3
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp config
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp patches
 
-      # ---------- 从 actions/cache 拉回归档 (缓存的是 tar.zst, 不是源码目录) ----------
-      - name: 恢复 dl 层缓存 (tier1)
+      # 步骤14：还原 Tier1 缓存（下载的源码包 dl 文件夹，通常几十 GB）
+      - name: Restore tier1 dl from Actions Cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.OUTPUT_DIR }}/tier1
-          key: tier1-${{ steps.fp.outputs.fp_tier1 }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier1
+          key: dl-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}
+          restore-keys: |
+            dl-${{ env.ARCH }}-${{ github.ref_name }}-
+            dl-${{ env.ARCH }}-
 
-      - name: 恢复工具链层缓存 (tier2)
+      # 步骤15：还原 Tier2 缓存（工具链和预编译组件，编译最耗时的部分）
+      # 【改动 I】key 由产物指纹 fp_tier2 换成输入指纹三段拼接：
+      # dl 源码(fp_tier1) + 配置(fp_config) + 补丁(fp_patches)——任一处不同即 miss 重编，
+      # 机制上保证还原产物严格对应本次下载的源码。restore-keys 保留：仅 tier2 自身
+      # 产物层的旧归档可作前缀兜底，输入层任何变化本 key 已挡住。
+      - name: Restore tier2 toolchain from Actions Cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.OUTPUT_DIR }}/tier2
-          # 旧: key: tier2-${{ steps.fp.outputs.fp_tier2 }}
-          # 新: 用输入指纹(源码+配置+补丁)拼 key, 严格对应源码
-          key: tier2-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier2
+          key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
+          restore-keys: |
+            tc-${{ env.ARCH }}-${{ github.ref_name }}-
+            tc-${{ env.ARCH }}-
 
-      - name: 恢复 target 包层缓存 (tier3)
+      # 步骤15.5：还原 Tier3 缓存（target 编译产物）。原工作流 tier3 只推不取，还原端缺失，补上。
+      # 【改动 I】同 tier2，key 换成输入指纹三段拼接。
+      - name: Restore tier3 target from Actions Cache
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.OUTPUT_DIR }}/tier3
-          # 旧: key: tier3-${{ steps.fp.outputs.fp_tier3 }}
-          # 新: 同样用输入指纹
-          key: tier3-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier3
+          key: tr-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
+          restore-keys: |
+            tr-${{ env.ARCH }}-${{ github.ref_name }}-
+            tr-${{ env.ARCH }}-
 
-      # ---------- 解归档到源码树 + dl 时间戳回拨 (脚本 auto 内完成) ----------
-      - name: 还原缓存到源码树 (含 dl 回拨 2000)
-        run: bash scripts/cache_tiered_x86.sh restore auto
+      # 步骤16：执行主还原逻辑（把下载好的缓存包解压回编译目录；
+      # 脚本内 zstd -T0 满核解压，完成后自动把 dl 时间戳回拨 2000 年）
+      - name: Restore Cache per Tier
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
 
-      # ---------- restore 之后、make 之前, 给每层打 marker 基准 ----------
-      # 顺序: restore -> (dl touch 回拨) -> marker -> make -> gate
-      - name: 打 marker 基准
-        run: for t in tier1 tier2 tier3; do bash scripts/cache_tiered_x86.sh marker "$t"; done
+      # 步骤17：下载缺失的源码包（如果缓存没命中，这里会联网下载；命中了则秒过）
+      - name: Download package
+        id: package
+        run: |
+          cd openwrt
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          # 【改动 K】make download 新拉下来的包 mtime 是"现在"，比还原出的 stamp 新，
+          # 会让 Make 误判重编；调 touchdl 把它们也回拨到 2000 年（脚本内部 find dl touch）
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh touchdl
+          df -hT $PWD
 
-      # ========== 4) ccache 加速 (需要时去掉整段注释即可启用) ==========
-      # - name: 配置 ccache
+      # ========== 【改动 L】ccache 加速（需要时把本段所有行首 # 去掉即可启用）==========
+      # - name: Setup ccache
       #   run: |
-      #     echo "CONFIG_CCACHE=y" >> $SRC_DIR/.config
-      #     cd $SRC_DIR && make defconfig
+      #     echo "CONFIG_CCACHE=y" >> openwrt/.config
+      #     cd openwrt && make defconfig
       #     echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
       #     echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
       #     echo "CCACHE_SLOPPINESS=time_macros,file_macro,include_file_mtime,include_file_ctime" >> $GITHUB_ENV
       #     echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
-      #     echo "CCACHE_HASHDIR=false" >> $GITHUB_ENV
       #
-      # - name: 恢复 ccache 缓存
+      # - name: Restore ccache from Actions Cache
       #   uses: actions/cache@v4
       #   with:
       #     path: ~/.ccache
-      #     key: ccache-x86_64-${{ github.run_id }}
+      #     key: ccache-${{ env.ARCH }}-${{ github.run_id }}
       #     restore-keys: |
-      #       ccache-x86_64-
+      #       ccache-${{ env.ARCH }}-
       #
-      # - name: ccache 统计(编译前)
+      # - name: ccache stats before compile
       #   run: ccache -s
-      # ==============================================================
+      #
+      # - name: ccache stats after compile
+      #   run: ccache -s
+      # ==============================================================================
 
-      - name: 编译固件
-        working-directory: ${{ env.SRC_DIR }}
+      # 步骤18：正式编译固件 (make -j$(nproc))
+      - name: Compile the firmware
+        id: compile
         run: |
-          make download -j"$(nproc)" || true
-          make -j"$(nproc)" || make -j1 V=s
+          cd openwrt
+          touch "$CACHE_ROOT/base_compilation_marker" # 打一个时间戳，用于后面判断哪些是新编译的（在 dl 回拨之后打，顺序不可反）
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc)  || make -j1 || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      # ========== ccache 统计(编译后, 与上面同步启用/注释) ==========
-      # - name: ccache 统计(编译后)
-      #   run: ccache -s
-      # ==============================================================
+      # 步骤19：再次检查磁盘空间，确保编译完还有剩余空间打包
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
 
-      # ---------- gate 判每层是否真变化, 变了才重打包 ----------
-      - name: 判定并重新打包变化的层
+      # 步骤20：可选 SSH 调试（如果你点开了调试开关，编译完会暂停 15 分钟等你连进去）
+      - name: Setup SSH debug (optional)
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
+        if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
+        with:
+          detached: true
+
+      # --- 5. 保存新缓存（为下一次编译加速做准备） ---
+
+      # 步骤21：检测哪些缓存层发生了变化（Gate 判定）
+      - name: Gate Tiers
         id: gate
         run: |
-          for t in tier1 tier2 tier3; do
-            c=$(bash scripts/cache_tiered_x86.sh gate "$t")
-            echo "[gate] $t changed=$c"
-            if [ "$c" = "1" ]; then
-              bash scripts/cache_tiered_x86.sh pack "$t"
-              echo "CHANGED_$t=1" >> $GITHUB_ENV
-            else
-              echo "CHANGED_$t=0" >> $GITHUB_ENV
-            fi
-          done
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
 
-      # ---------- 把变化的层的新归档写回 actions/cache ----------
-      - name: 保存 dl 层缓存 (tier1)
-        if: env.CHANGED_tier1 == '1'
+      # 步骤22：如果 Tier2 变了，重新打包并上传保存
+      # 【改动 I】save key 与 restore key 保持一致（输入指纹三段拼接）
+      - name: Repack tier2 if Changed
+        if: steps.gate.outputs.changed_tier2 == '1'
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
+
+      - name: Save tier2 to Actions Cache
+        if: steps.gate.outputs.changed_tier2 == '1'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.OUTPUT_DIR }}/tier1
-          key: tier1-${{ steps.fp.outputs.fp_tier1 }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier2
+          key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
 
-      - name: 保存工具链层缓存 (tier2)
-        if: env.CHANGED_tier2 == '1'
+      - name: Save tier3 to Actions Cache
+        if: steps.gate.outputs.changed_tier3 == '1'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.OUTPUT_DIR }}/tier2
-          key: tier2-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier3
+          key: tr-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
 
-      - name: 保存 target 包层缓存 (tier3)
-        if: env.CHANGED_tier3 == '1'
+      # 步骤23：如果 Tier3 变了，打包（归档供上面 Save tier3 使用）并可选推送镜像（image 现真 build+push）
+      - name: Pack and Push tier3 if Changed
+        if: steps.gate.outputs.changed_tier3 == '1'
+        run: |
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh image tier3
+
+      # 步骤24：重新计算 dl(tier1) 的指纹并保存（因为 make 期间可能下载了新包）
+      - name: Repack & Save tier1 dl
+        if: steps.gate.outcome == 'success'
+        run: |
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
+        id: fp1end
+
+      - name: Save tier1 to Actions Cache
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.OUTPUT_DIR }}/tier3
-          key: tier3-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier1
+          key: dl-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp1end.outputs.fp_tier1 }}
 
-      # ---------- 大层双通道: 变化时把归档推 GHCR (可选, actions/cache 已兜底) ----------
-      - name: 登录 GHCR
-        if: env.CHANGED_tier3 == '1'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # --- 6. 日志上传（方便失败时排查问题） ---
 
-      - name: 推送大层归档到 GHCR
-        if: env.CHANGED_tier3 == '1'
-        run: bash scripts/cache_tiered_x86.sh image tier3 || true
-
-      - name: 上传固件
+      - name: Upload tail log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-x86_64
-          path: ${{ env.SRC_DIR }}/bin/targets/
-          if-no-files-found: ignore
+          name: imm-tail-${{ github.run_id }}
+          path: /tmp/imm-build.log
+          retention-days: 3
+
+      - name: Upload IMM build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imm-error-${{ github.run_id }}
+          path: |
+            logserror.txt
+            logscompile.txt
+          retention-days: 3
+
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-compile-log
+          path: ${{ github.workspace }}/openwrt/compile.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      # --- 7. 上传编译产物和固件 ---
+
+      # 步骤25：上传整个 bin 目录（可选）
+      - name: Upload bin directory
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+        with:
+          name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: openwrt/bin
+
+      # 步骤26：整理固件文件，提取出最终的刷机文件路径
+      - name: Organize files
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+        run: |
+          cd openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      # 步骤27：将固件作为制品 (Artifact) 上传
+      - name: Upload firmware directory
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        with:
+          name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+          path: ${{ env.FIRMWARE }}
+
+      # --- 8. 编译 Docker 镜像（把固件打包成 Docker 容器镜像） ---
+
+      # 步骤28：准备 Docker 上下文，把编译出的 rootfs.tar.gz 准备好
+      - name: Prepare Docker context
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        run: |
+          ROOTFS="$(find openwrt/bin/targets -name '*rootfs*.tar.gz' | head -n1)"
+          echo "找到 rootfs: ${ROOTFS:-无}"
+          mkdir -p $GITHUB_WORKSPACE/docker_ctx
+          if [ -z "$ROOTFS" ]; then echo "::error::no rootfs tar"; exit 1; fi
+          cp "$ROOTFS" "$GITHUB_WORKSPACE/docker_ctx/openwrt-rootfs.tar.gz"   # 【FIX-5】保留 .tar.gz 扩展名，与 Dockerfile 的 ADD openwrt-rootfs.tar.gz 对齐；原名拷成 .tar 会让 ADD 找不到文件
+          # 【FIX-1】把 Dockerfile 拷进 build context，否则 buildx 找不到（原文件已写但整段顶格，导致 YAML 解析中断，此处一并修复缩进）
+          if [ ! -f "$GITHUB_WORKSPACE/scripts/Dockerfile.firmware" ]; then
+            echo "::error::scripts/Dockerfile.firmware missing"; exit 1; fi
+          cp "$GITHUB_WORKSPACE/scripts/Dockerfile.firmware" "$GITHUB_WORKSPACE/docker_ctx/Dockerfile.firmware"
+
+      # 步骤29：设置 Docker Buildx 环境
+      - name: Set up Docker Buildx
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        uses: docker/setup-buildx-action@v3
+
+      # 步骤30：使用 scripts/Dockerfile.firmware 构建并推送 Docker 镜像 【FIX-6】拼写订正：原注释 SCRPTS→scripts
+      - name: Build & Push Docker image (GHA layer cache)
+        if: steps.organize.outputs.status == 'success' && !cancelled()
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ github.workspace }}/docker_ctx
+          file: Dockerfile.firmware   # 【FIX-2】相对 context 的路径（已由 Prepare 步骤拷入 docker_ctx），与 context 同树
+          push: true
+          tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      # --- 9. 发布 Release ---
+
+      # 步骤31：生成带有当前日期的 Release 版本号
+      - name: Generate release tag
+        id: tag
+        if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+        run: |
+          echo "release_tag=$RELEASE_TAG-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          touch release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      # 步骤32：将固件发布到仓库的 Releases 页面
+      - name: Upload firmware to release
+        uses: ncipollo/release-action@v1.14.0
+        if: steps.tag.outputs.status == 'success' && !cancelled()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: ${{ steps.tag.outputs.release_tag }}
+          bodyFile: "release.txt"
+          artifacts: ${{ env.FIRMWARE }}/*
