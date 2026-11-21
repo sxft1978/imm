@@ -93,5 +93,7 @@ inject_banip
 # 4. 配置 SSH 双端口
 configure_ssh
 
+chmod +x files/etc/uci-defaults/99-custom-settings
+
 echo "✅ 全部构建增强配置完成"
 
