@@ -1,0 +1,9 @@
+# context 已限定为 docker_ctx/，本身很小，此文件仅作双保险
+.git
+.github
+openwrt/
+build_dir/
+staging_dir/
+tmp/
+dl/
+*.log
