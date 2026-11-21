@@ -1,52 +1,55 @@
 #!/bin/sh
-# 仓库路径: files/etc/uci-defaults/99-custom-settings
+# 路径: files/etc/uci-defaults/99-custom-settings
 # 作用: 固件第一次启动时，修改软件源为南京大学 + 修改LAN口IP和网关
+#仓库里 chmod +x files/etc/uci-defaults/99-custom-settings
+#或在 workflow 打包前加 chmod -R +x files/etc/uci-defaults/，否则固件里是 644，开机根本不跑。
 
-IMMORTALWRT_MIRROR="https://mirror.nju.edu.cn/immortalwrt"
-
-# ========= 1. customfeeds.list 直接写入（严格按图片7行）=========
-cat >  /etc/apk/repositories.d/customfeeds.list <<EOF
-https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/base/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/luci/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/packages/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/routing/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/telephony/packages.adb
-https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
-EOF
-
-# ========= 2. distfeeds.list 用 sed 全局替换 =========
-# APK_CONF="/etc/apk/repositories.d/distfeeds.list"
-
-cat > /etc/apk/repositories.d/distfeeds.list  <<EOF
-https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/base/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/luci/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/packages/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/routing/packages.adb
-https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/telephony/packages.adb
-https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
-EOF
-
-if [ -f "/etc/apk/repositories.d/distfeeds.list" ]; then
-    apk update
-
-elif [ -f "/etc/opkg/distfeeds.conf" ]; then
-    opkg update
+# 确保目录存在（根据实际包管理器选择）
+if [ -d "/etc/opkg" ]; then
+    FEEDS_DIR="/etc/opkg"
+    CUSTOM_FEEDS="$FEEDS_DIR/customfeeds.conf"
+    DIST_FEEDS="$FEEDS_DIR/distfeeds.conf"
+elif [ -d "/etc/apk" ]; then
+    FEEDS_DIR="/etc/apk/repositories.d"
+    CUSTOM_FEEDS="$FEEDS_DIR/customfeeds.list"
+    DIST_FEEDS="$FEEDS_DIR/distfeeds.list"
+    mkdir -p "$FEEDS_DIR"
+else
+    echo "ERROR: no opkg or apk found" >&2
+    exit 1
 fi
 
-# if [ -f "$APK_CONF" ]; then
-   # sed -i "s|https://downloads.immortalwrt.org|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
- #    sed -i "s|https://mirrors.vsean.net/openwrt|${IMMORTALWRT_MIRROR}|g" "$APK_CONF"
-# fi
+# ========== 1. 写入自定义软件源 ==========
+cat > "$CUSTOM_FEEDS" <<'EOF'
+https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/base/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/luci/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/packages/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/routing/packages.adb
+https://mirrors.vsean.net/openwrt/snapshots/packages/x86_64/telephony/packages.adb
+https://downloads.openwrt.org/snapshots/packages/x86_64/video/packages.adb
+EOF
 
-# ========= 3. 修改 LAN 口 IP 和网关 =========
+# ========== 2. 替换 distfeeds ==========
+if [ -f "$DIST_FEEDS" ]; then
+    sed -i 's|https://downloads.openwrt.org|https://mirrors.vsean.net/openwrt|g' "$DIST_FEEDS"
+fi
+
+# ========== 3. 刷新包列表 ==========
+if command -v opkg >/dev/null 2>&1; then
+    opkg update 2>/dev/null || true
+elif command -v apk >/dev/null 2>&1; then
+    apk update 2>/dev/null || true
+fi
+
+# ========== 4. 修改 LAN 口 IP 和网关（如果脚本后半部分有） ==========
 uci set network.lan.ipaddr='192.168.1.129'
 uci set network.lan.netmask='255.255.255.0'
 uci set network.lan.gateway='192.168.1.1'
 uci set network.lan.dns='192.168.1.1'
 uci commit network
-# ========= 4. 重启网络使配置生效果 =========
+
+# ========= 5 重启网络使配置生效果 =========
 /etc/inti.d/network restart
 
 
