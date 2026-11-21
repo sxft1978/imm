@@ -66,7 +66,7 @@ jobs:
 
       - name: Load Custom Feeds (before cache key)
         run: |
-          [ -e files ] && cp -rf files/* openwrt/
+          [ -e files ] && mv files openwrt/
           chmod +x $DIY_P1_SH
           cd openwrt
           ${{ github.workspace }}/$DIY_P1_SH
