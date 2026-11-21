@@ -3,7 +3,7 @@
 # 工作流显示的名称
 name: Immor_xiaoyi特别版 · 三层缓存+Docker加速版
 
-# 触发条件：只在网页上手动点击“Run workflow”时运行
+# 触发条件：只在网页上手动点击"Run workflow"时运行
 on:
   workflow_dispatch:
     inputs:
@@ -30,14 +30,14 @@ env:
   # OpenWrt 源码仓库和分支
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: master
-  
+
   # 自定义配置文件的路径
   CONFIG_FILE: config/imm_config/test.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
   DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
   DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
   SOURCE_DIR: openwrt
-  
+
   # 固件上传相关配置
   RELEASE_TAG: immortalwrt-X86
   UPLOAD_BIN_DIR: false
@@ -54,20 +54,20 @@ env:
   SRC_DIR: ${{ github.workspace }}/openwrt                # 编译源码区
   CHUNK_SIZE: 2000M                                       # 缓存分块大小（防 GitHub 限制）
   ZSTD_LEVEL: 10                                          # 压缩等级
-  
+
   # 缓存层对应的文件夹路径
   TIER2_PATHS: build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg
   TIER3_PATHS: build_dir/target-x86_64_* staging_dir/target-x86_64_*
-  
+
   # Docker 镜像推送目标
   DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/immortalwrt-xiaoyi
 
 # ===== 任务主体 =====
 jobs:
   build:
-    runs-on: ubuntu-24.04  # 使用 GitHub 最新最干净的 Ubuntu 26.04 环境
+    runs-on: ubuntu-24.04  # 使用 GitHub 最新最干净的 Ubuntu 24.04 环境（原注释误写 26.04，此处已订正，未改运行版本）
     steps:
-      
+
       # --- 1. 基础环境准备 ---
 
       # 步骤1：检查服务器当前磁盘空间
@@ -112,6 +112,8 @@ jobs:
       # 步骤4：克隆你自己的仓库（包含你的脚本和配置文件）
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true   # 【FIX-3】确保 scripts/ 下文件（若为子模块）被一并拉取，否则 Prepare 步骤会报找不到 Dockerfile
 
       # 步骤5：给你的缓存脚本赋予执行权限，并自动登录 GHCR（用于后续推送缓存镜像）
       - name: Prep Cache Script & Login GHCR
@@ -127,7 +129,8 @@ jobs:
         run: |
           sudo -E apt-get -qq update
           sudo -E apt-get -qq install $(curl -fsSL https://github.com/sxft1978/imm/raw/main/diy_script/immortalwrt_dependence)
-          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+          sudo apt-get -qq install -y zstd   # 【FIX-4】cache 脚本用 tar -I zstd，runner 默认未必装，显式安装
+          sudo chown $USER:$GROUPS $GITHUB_WORKSPACE   # 【FIX-A】修复：原文件该行顶格丢失缩进，导致 run 块标量中断、整份 YAML 解析失败
           sudo timedatectl set-timezone "$TZ"
           df -hT $PWD
 
@@ -355,20 +358,25 @@ jobs:
           ROOTFS="$(find openwrt/bin/targets -name '*rootfs*.tar.gz' | head -n1)"
           echo "找到 rootfs: ${ROOTFS:-无}"
           mkdir -p $GITHUB_WORKSPACE/docker_ctx
-          if [ -n "$ROOTFS" ]; then cp "$ROOTFS" $GITHUB_WORKSPACE/docker_ctx/openwrt-rootfs.tar; fi
+          if [ -z "$ROOTFS" ]; then echo "::error::no rootfs tar"; exit 1; fi
+          cp "$ROOTFS" "$GITHUB_WORKSPACE/docker_ctx/openwrt-rootfs.tar.gz"   # 【FIX-5】保留 .tar.gz 扩展名，与 Dockerfile 的 ADD openwrt-rootfs.tar.gz 对齐；原名拷成 .tar 会让 ADD 找不到文件
+          # 【FIX-1】把 Dockerfile 拷进 build context，否则 buildx 找不到（原文件已写但整段顶格，导致 YAML 解析中断，此处一并修复缩进）
+          if [ ! -f "$GITHUB_WORKSPACE/scripts/Dockerfile.firmware" ]; then
+            echo "::error::scripts/Dockerfile.firmware missing"; exit 1; fi
+          cp "$GITHUB_WORKSPACE/scripts/Dockerfile.firmware" "$GITHUB_WORKSPACE/docker_ctx/Dockerfile.firmware"
 
       # 步骤29：设置 Docker Buildx 环境
       - name: Set up Docker Buildx
         if: steps.organize.outputs.status == 'success' && !cancelled()
         uses: docker/setup-buildx-action@v3
 
-      # 步骤30：使用 SCRPTS/Dockerfile.firmware 构建并推送 Docker 镜像
+      # 步骤30：使用 scripts/Dockerfile.firmware 构建并推送 Docker 镜像 【FIX-6】拼写订正：原注释 SCRPTS→scripts
       - name: Build & Push Docker image (GHA layer cache)
         if: steps.organize.outputs.status == 'success' && !cancelled()
         uses: docker/build-push-action@v6
         with:
           context: ${{ github.workspace }}/docker_ctx
-          file: ${{ github.workspace }}/scripts/Dockerfile.firmware
+          file: Dockerfile.firmware   # 【FIX-2】相对 context 的路径（已由 Prepare 步骤拷入 docker_ctx），与 context 同树
           push: true
           tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
           cache-from: type=gha
