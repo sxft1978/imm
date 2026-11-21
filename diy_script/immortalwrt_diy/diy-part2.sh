@@ -63,6 +63,7 @@ if [ -f "$SSHD_CONFIG" ]; then
 fi
 
 # --- 4. 按顺序启动 OpenSSH 服务 ---
+/etc/init.d/dropbear start
 /etc/init.d/sshd enable
 /etc/init.d/sshd start
 
