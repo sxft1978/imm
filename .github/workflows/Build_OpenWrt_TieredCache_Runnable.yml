@@ -161,7 +161,7 @@ jobs:
       - name: Load Custom Feeds (before cache key)
         run: |
           ls
-          [ -e files ] && cp -rf files/* openwrt/
+          [ -e files ] && mv files openwrt/
           chmod +x $DIY_P1_SH
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P1_SH
@@ -444,7 +444,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ github.workspace }}/docker_ctx
-          file: Dockerfile.firmware   # 【FIX-2】相对 context 的路径（已由 Prepare 步骤拷入 docker_ctx），与 context 同树
+          file: scripts/Dockerfile.firmware   # 【FIX-2】相对 context 的路径（已由 Prepare 步骤拷入 docker_ctx），与 context 同树
           push: true
           tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
           cache-from: type=gha
