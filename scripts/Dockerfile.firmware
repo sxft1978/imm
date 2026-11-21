@@ -1,0 +1,3 @@
+FROM scratch
+ADD openwrt-rootfs.tar.gz /
+CMD ["/sbin/init"]
