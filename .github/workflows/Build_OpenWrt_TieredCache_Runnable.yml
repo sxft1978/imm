@@ -55,12 +55,16 @@ env:
   CHUNK_SIZE: 2000M                                       # 缓存分块大小（防 GitHub 限制）
   ZSTD_LEVEL: 10                                          # 压缩等级
 
-  # 缓存层对应的文件夹路径
+  # 缓存层对应的文件夹路径（均相对 SRC_DIR=openwrt，脚本内部 cd 到 SRC_DIR 后解析）
+  TIER1_PATHS: dl   # 【新增】Tier1=下载包目录；原工作流未定义、脚本默认却当 staging，导致名实不符
   TIER2_PATHS: build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg
   TIER3_PATHS: build_dir/target-x86_64_* staging_dir/target-x86_64_*
 
   # Docker 镜像推送目标
   DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/immortalwrt-xiaoyi
+
+  # 三层缓存镜像仓库前缀（image 子命令推 tier3 归档用）；与 DOCKER_IMAGE 同 owner
+  REPO_PREFIX: ghcr.io/${{ github.repository_owner }}/immortalwrt-tier3-cache
 
 # ===== 任务主体 =====
 jobs:
@@ -210,6 +214,16 @@ jobs:
             tc-${{ env.ARCH }}-${{ github.ref_name }}-
             tc-${{ env.ARCH }}-
 
+      # 步骤15.5：还原 Tier3 缓存（target 编译产物）。原工作流 tier3 只推不取，还原端缺失，补上。
+      - name: Restore tier3 target from Actions Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_ROOT }}/tiered/tier3
+          key: tr-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier3 }}
+          restore-keys: |
+            tr-${{ env.ARCH }}-${{ github.ref_name }}-
+            tr-${{ env.ARCH }}-
+
       # 步骤16：执行主还原逻辑（把下载好的缓存包解压回编译目录）
       - name: Restore Cache per Tier
         run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
@@ -271,7 +285,14 @@ jobs:
           path: ${{ env.CACHE_ROOT }}/tiered/tier2
           key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier2 }}
 
-      # 步骤23：如果 Tier3 变了，打包并通过 Docker 镜像形式推送保存
+      - name: Save tier3 to Actions Cache
+        if: steps.gate.outputs.changed_tier3 == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_ROOT }}/tiered/tier3
+          key: tr-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier3 }}
+
+      # 步骤23：如果 Tier3 变了，打包（归档供上面 Save tier3 使用）并可选推送镜像（image 现真 build+push）
       - name: Pack and Push tier3 if Changed
         if: steps.gate.outputs.changed_tier3 == '1'
         run: |
