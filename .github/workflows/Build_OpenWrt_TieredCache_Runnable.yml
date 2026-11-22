@@ -1,7 +1,7 @@
 # ===== 工作流名称和触发条件 ===== 
 
 # 工作流显示的名称
-name: Immor_xiaoyi特别版 · 三层缓存+Docker加速版
+name: Immor_xiaoyi三层缓存_Docker加速版
 
 # 本版相对 fixed2 的四项改动（与 cache_tiered_x86_fixed.sh 修订版2 配套）：
 #   I. tier2/tier3 缓存 key 改用输入指纹：fp_tier1(dl源码) + fp_config(配置) +
@@ -41,7 +41,7 @@ env:
   REPO_BRANCH: master
 
   # 自定义配置文件的路径
-  CONFIG_FILE: config/imm_config/86-64.config
+  CONFIG_FILE: config/imm_config/test.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
   DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
   DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
