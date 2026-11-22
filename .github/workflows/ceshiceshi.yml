@@ -212,7 +212,7 @@ jobs:
 
       # ========== ccache（需要时取消注释）==========
       - name: Setup ccache
-         run: |
+        run: |
            echo "CONFIG_CCACHE=y" >> openwrt/.config
            cd openwrt && make defconfig
            echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
