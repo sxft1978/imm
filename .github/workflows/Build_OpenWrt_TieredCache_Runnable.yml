@@ -302,92 +302,7 @@ jobs:
         if: (!cancelled())
         run: df -hT
 
-      # 步骤20：可选 SSH 调试（如果你点开了调试开关，编译完会暂停 15 分钟等你连进去）
-      - name: Setup SSH debug (optional)
-        uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 15
-        if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
-        with:
-          detached: true
-
-      # --- 5. 保存新缓存（为下一次编译加速做准备） ---
-
-      # 步骤21：检测哪些缓存层发生了变化（Gate 判定）
-      - name: Gate Tiers
-        id: gate
-        run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
-
-      # 步骤22：如果 Tier2 变了，重新打包并上传保存
-      # 【改动 I】save key 与 restore key 保持一致（输入指纹三段拼接）
-      - name: Repack tier2 if Changed
-        if: steps.gate.outputs.changed_tier2 == '1'
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
-
-      - name: Save tier2 to Actions Cache
-        if: steps.gate.outputs.changed_tier2 == '1'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier2
-          key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
-
-      - name: Save tier3 to Actions Cache
-        if: steps.gate.outputs.changed_tier3 == '1'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier3
-          key: tr-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
-
-      # 步骤23：如果 Tier3 变了，打包（归档供上面 Save tier3 使用）并可选推送镜像（image 现真 build+push）
-      - name: Pack and Push tier3 if Changed
-        if: steps.gate.outputs.changed_tier3 == '1'
-        run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh image tier3
-
-      # 步骤24：重新计算 dl(tier1) 的指纹并保存（因为 make 期间可能下载了新包）
-      - name: Repack & Save tier1 dl
-        if: steps.gate.outcome == 'success'
-        run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
-        id: fp1end
-
-      - name: Save tier1 to Actions Cache
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier1
-          key: dl-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp1end.outputs.fp_tier1 }}
-
-      # --- 6. 日志上传（方便失败时排查问题） ---
-
-      - name: Upload tail log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: imm-tail-${{ github.run_id }}
-          path: /tmp/imm-build.log
-          retention-days: 3
-
-      - name: Upload IMM build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: imm-error-${{ github.run_id }}
-          path: |
-            logserror.txt
-            logscompile.txt
-          retention-days: 3
-
-      - name: Upload compile log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immortalwrt-x86-compile-log
-          path: ${{ github.workspace }}/openwrt/compile.log
-          retention-days: 7
-          if-no-files-found: warn
+     
 
       # --- 7. 上传编译产物和固件 ---
 
@@ -417,39 +332,7 @@ jobs:
           name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
-      # --- 8. 编译 Docker 镜像（把固件打包成 Docker 容器镜像） ---
-
-      # 步骤28：准备 Docker 上下文，把编译出的 rootfs.tar.gz 准备好
-      - name: Prepare Docker context
-        if: steps.organize.outputs.status == 'success' && !cancelled()
-        run: |
-          ROOTFS="$(find openwrt/bin/targets -name '*rootfs*.tar.gz' | head -n1)"
-          echo "找到 rootfs: ${ROOTFS:-无}"
-          mkdir -p $GITHUB_WORKSPACE/docker_ctx
-          if [ -z "$ROOTFS" ]; then echo "::error::no rootfs tar"; exit 1; fi
-          cp "$ROOTFS" "$GITHUB_WORKSPACE/docker_ctx/openwrt-rootfs.tar.gz"   # 【FIX-5】保留 .tar.gz 扩展名，与 Dockerfile 的 ADD openwrt-rootfs.tar.gz 对齐；原名拷成 .tar 会让 ADD 找不到文件
-          # 【FIX-1】把 Dockerfile 拷进 build context，否则 buildx 找不到（原文件已写但整段顶格，导致 YAML 解析中断，此处一并修复缩进）
-          if [ ! -f "$GITHUB_WORKSPACE/scripts/Dockerfile.firmware" ]; then
-            echo "::error::scripts/Dockerfile.firmware missing"; exit 1; fi
-          cp "$GITHUB_WORKSPACE/scripts/Dockerfile.firmware" "$GITHUB_WORKSPACE/docker_ctx/Dockerfile.firmware"
-
-      # 步骤29：设置 Docker Buildx 环境
-      - name: Set up Docker Buildx
-        if: steps.organize.outputs.status == 'success' && !cancelled()
-        uses: docker/setup-buildx-action@v3
-
-      # 步骤30：使用 scripts/Dockerfile.firmware 构建并推送 Docker 镜像 【FIX-6】拼写订正：原注释 SCRPTS→scripts
-      - name: Build & Push Docker image (GHA layer cache)
-        if: steps.organize.outputs.status == 'success' && !cancelled()
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ github.workspace }}/docker_ctx
-          file: scripts/Dockerfile.firmware   # 【FIX-2】相对 context 的路径（已由 Prepare 步骤拷入 docker_ctx），与 context 同树
-          push: true
-          tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+    
 
       # --- 9. 发布 Release ---
 
