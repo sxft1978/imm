@@ -5,8 +5,7 @@
 #   Job3 upload  ：上传固件 / 构建推送 Docker 镜像 / 发布 Release，依赖 build
 # 拆分后「重新运行失败的任务」可单独重跑备份或上传，不必重编整个固件。
 
-name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_ceshiceshi
-
+name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_测试
 on:
   workflow_dispatch:
     inputs:
