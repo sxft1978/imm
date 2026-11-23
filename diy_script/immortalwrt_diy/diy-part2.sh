@@ -101,27 +101,27 @@ chmod +x files/etc/uci-defaults/99-custom-settings
 # 修改编译源码而配置
 # ============================================================
 
-if [ -f .config ]; then
-    sed -i 's/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=2/' .config
-    sed -i 's/CONFIG_TARGET_SQUASHFS_SMALL_READERS=4/CONFIG_TARGET_SQUASHFS_SMALL_READERS=2/' .config
-fi
-make defconfig
+#if [ -f .config ]; then
+ #   sed -i 's/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=2/' .config
+#    sed -i 's/CONFIG_TARGET_SQUASHFS_SMALL_READERS=4/CONFIG_TARGET_SQUASHFS_SMALL_READERS=2/' .config
+#fi
+#make defconfig
 
 # 2. 改压缩算法
-COMP=zstd
-sed -i "s/SQUASHFSCOMP := gzip.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
-sed -i "s/SQUASHFSCOMP := xz.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
+#COMP=zstd
+#sed -i "s/SQUASHFSCOMP := gzip.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
+#sed -i "s/SQUASHFSCOMP := xz.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
 
 # 3. 验证是否改成功
-echo "--- 当前 SQUASHFSCOMP 设置 ---"
-grep -n "SQUASHFSCOMP" include/image.mk
+#echo "--- 当前 SQUASHFSCOMP 设置 ---"
+#grep -n "SQUASHFSCOMP" include/image.mk
 
-if grep -q "SQUASHFSCOMP := zstd" include/image.mk; then
-    echo "[OK] SQUASHFSCOMP 已改为 zstd"
-else
-    echo "[ERROR] 修改失败！当前内容：" >&2
-    grep -n "SQUASHFSCOMP" include/image.mk >&2
-    exit 1
-fi
+#if grep -q "SQUASHFSCOMP := zstd" include/image.mk; then
+  #  echo "[OK] SQUASHFSCOMP 已改为 zstd"
+#else
+#    echo "[ERROR] 修改失败！当前内容：" >&2
+#    grep -n "SQUASHFSCOMP" include/image.mk >&2
+#    exit 1
+#fi
 
 echo "✅ 全部构建增强配置完成"
