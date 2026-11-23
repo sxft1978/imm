@@ -1,4 +1,4 @@
-name: Cleanup Old Runs and Releases
+name: 清理旧Runs and Releases
 
 on:
   schedule:
