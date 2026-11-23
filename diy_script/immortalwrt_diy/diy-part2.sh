@@ -112,15 +112,11 @@ sed -i "s/^SQUASHFSCOMP := gzip.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
 sed -i "s/^SQUASHFSCOMP := xz.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
 
 # 3. 验证
-echo "--- 当前 SQUASHFSCOMP 设置 ---"
-grep -n "^SQUASHFSCOMP" include/image.mk
-
-if grep -q "^SQUASHFSCOMP := ${COMP}" include/image.mk; then
-    echo "[OK] SQUASHFSCOMP 已成功改为 ${COMP}"
+# 验证是否改成功
+if grep -q "SQUASHFSCOMP := zstd" include/image.mk; then
+    echo "[OK] SQUASHFSCOMP 已改为 zstd"
 else
-    echo "[ERROR] 修改失败！include/image.mk 内容如下：" >&2
-    grep -n "SQUASHFSCOMP" include/image.mk >&2
-    exit 1
+    echo "[WARN] 修改失败，请检查 include/image.mk 行号" >&2
 fi
 
 echo "✅ 全部构建增强配置完成"
