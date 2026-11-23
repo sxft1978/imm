@@ -96,8 +96,10 @@ configure_ssh
 
 chmod +x files/etc/uci-defaults/99-custom-settings
 
-echo "✅ 全部构建增强配置完成"
 
+# ============================================================
+# 修改编译源码而配置
+# ============================================================
 
 # 1. 改配置（线程数）
 sed -i 's/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=2/' .config
