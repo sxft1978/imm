@@ -208,8 +208,27 @@ jobs:
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
           bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh touchdl
-          df -hT $PWD
+          df -hT $PWD          
 
+      # ===== 1. 恢复 ccache 缓存（放在编译之前）=====
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/openwrt/.ccache
+          key: ccache-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_config }}
+          restore-keys: |
+            ccache-${{ env.ARCH }}-${{ github.ref_name }}-
+            ccache-${{ env.ARCH }}-
+
+      # ===== 2. 启用 ccache =====
+      - name: Enable ccache
+        run: |
+          echo "CONFIG_CCACHE=y" >> openwrt/.config
+          cd openwrt && make defconfig
+          echo "CCACHE_DIR=${{ github.workspace }}/openwrt/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
+          echo "CCACHE_SLOPPINESS=time_macros,file_macro,include_file_mtime,include_file_ctime" >> $GITHUB_ENV
+          echo "CCACHE_BASEDIR=${{ github.workspace }}/openwrt" >> $GITHUB_ENV
       # ========== ccache（需要时取消注释）==========
       #- name: Setup ccache
       #  run: |
@@ -237,7 +256,12 @@ jobs:
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
-
+      # ===== 4. 保存 ccache 缓存（放在编译之后）=====
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/openwrt/.ccache
+          key: ccache-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_config }}
       - name: Setup SSH debug (optional)
         uses: mxschmitt/action-tmate@v3
         timeout-minutes: 15
