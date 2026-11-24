@@ -13,7 +13,7 @@ elif [ -d "/etc/apk" ]; then
     FEEDS_DIR="/etc/apk/repositories.d"
     CUSTOM_FEEDS="$FEEDS_DIR/customfeeds.list"
     DIST_FEEDS="$FEEDS_DIR/distfeeds.conf"
-    mkdir -p "$FEEDS_DIR"
+    #mkdir -p "$FEEDS_DIR"
 else
     echo "ERROR: no opkg or apk found" >&2
     exit 1
