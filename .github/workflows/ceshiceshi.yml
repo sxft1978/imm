@@ -126,7 +126,7 @@ jobs:
 
       - name: Prep Cache Script & Login GHCR
         run: |
-          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh
+          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh
           mkdir -p "$CACHE_ROOT"
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
@@ -182,10 +182,10 @@ jobs:
       - name: Fingerprint Stable Tiers
         id: fp
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp tier1
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp config
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp patches
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp key
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp tier1
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp config
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp patches
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp key
 
       - name: Restore tier1 dl from Actions Cache
         id: cache_tier1
@@ -199,18 +199,18 @@ jobs:
 
       # [N3] tier2/tier3 不再走 Actions Cache，改从 GHCR 镜像拉回
       - name: Pull tier2 cache image from GHCR
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pull tier2
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pull tier2
 
       - name: Pull tier3 cache image from GHCR
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pull tier3
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pull tier3
 
       # [N3] tier1 的 Actions Cache 未命中时，用 GHCR 兜底
       - name: Pull tier1 cache image from GHCR (fallback)
         if: steps.cache_tier1.outputs.cache-hit != 'true'
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pull tier1
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pull tier1
 
       - name: Restore Cache per Tier
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
 
       - name: Download package
         id: package
@@ -219,7 +219,7 @@ jobs:
           make download -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh touchdl
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh touchdl
           df -hT $PWD
 
       # --- 编译固件：DEVICE_NAME/FILE_DATE 走本步骤 output [N4] ---
@@ -250,27 +250,27 @@ jobs:
       - name: Gate Tiers
         id: gate
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
 
       - name: Pack all tiers
         id: pack
         run: |
           # 不再对 pack 失败静默 || true：路径缺失脚本自身只 warning，
           # 真失败（tar/压缩出错）必须让 Job 变红暴露，而不是上传空壳。
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp tier1
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp tier1
 
       # [N1] 大归档原地推镜像，不经 artifact、不占 Actions Cache 配额
       - name: Push tier2 cache image
         if: steps.gate.outputs.changed_tier2 == '1'
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh push tier2
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh push tier2
 
       - name: Push tier3 cache image
         if: steps.gate.outputs.changed_tier3 == '1'
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh push tier3
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh push tier3
 
       - name: Organize files
         id: organize
@@ -383,7 +383,7 @@ jobs:
 
       - name: Read meta & Prep script
         run: |
-          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh
+          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh
           set -a; source $GITHUB_WORKSPACE/build_meta.env; set +a
           echo "ARCH=$ARCH" >> $GITHUB_ENV
           echo "REF_NAME=$REF_NAME" >> $GITHUB_ENV
