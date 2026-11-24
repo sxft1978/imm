@@ -31,7 +31,7 @@ EOF
 
 # ========== 2. 替换 distfeeds ==========
 #if [ -f "$DIST_FEEDS" ]; then
-    sed -i 's|https://downloads.openwrt.org|https://mirrors.vsean.net/openwrt|g' "$DIST_FEEDS"
+    #sed -i 's|https://downloads.openwrt.org|https://mirrors.vsean.net/openwrt|g' "$DIST_FEEDS"
 #fi
 cat > "$DIST_FEEDS" <<'EOF'
 https://mirrors.vsean.net/openwrt/snapshots/targets/x86/64/packages/packages.adb
