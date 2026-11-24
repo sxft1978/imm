@@ -1,11 +1,27 @@
-# ===== 工作流名称和触发条件 =====
-# 三层缓存_Docker加速版 —— 拆分为 3 个独立 Job 版本
-#   Job1 build   ：环境准备 → 还原缓存 → 下载 → 编译完整固件 → 打包三层缓存 → 产物/缓存交棒
-#   Job2 backup  ：三层缓存备份（save Actions Cache + 推 tier3 镜像到 GHCR），依赖 build
-#   Job3 upload  ：上传固件 / 构建推送 Docker 镜像 / 发布 Release，依赖 build
-# 拆分后「重新运行失败的任务」可单独重跑备份或上传，不必重编整个固件。
+# =====================================================================
+# Immor_xiaoyi 三层缓存_Docker加速版 —— 三Job拆分 · final 修复版
+#   基于「workflow_三Job拆分_修正版.yml」继续修掉三处根因（编号沿用修复 N1-N6）：
+#
+#   [N1] tier2/tier3 彻底退出 Actions Cache（几十 GB 一次就撑爆 10GB 共享配额，
+#        GitHub 按 LRU 把刚存的连 tier1 一起驱逐——这是 Caches 页只剩 buildkit
+#        小条目、第二次跑完全没恢复的直接根因）。改走 Job1 内 GHCR 镜像 push，
+#        restore 侧用脚本新子命令 pull 经 docker create+cp 取回归档。
+#   [N2] tier1 缓存 key 全部改用稳定输入指纹 fp_key = md5(config+patches)。
+#        原版 restore 用编译前 dl 指纹、Job2 保存用编译后指纹 FP_TIER1_END，
+#        两次 key 必然不同 -> 永不命中（key 自锁）。
+#   [N3] tier2/tier3 的 restore 步骤（原 actions/cache/restore 永 miss）删除，
+#        换成 GHCR pull；tier1 cache 未命中时也走 GHCR pull 兜底。
+#   [N4] DEVICE_NAME/FILE_DATE 从 $GITHUB_ENV 改为 steps.compile 的 GITHUB_OUTPUT
+#        并提升为 Job outputs（原版 meta 里这两项为空，Job3 制品命名连带出错）。
+#   [N5] Job3 的 build-push file 改为 docker_ctx 内绝对路径（file 相对 context
+#        解析，原 scripts/Dockerfile.firmware 必报 not found）。
+#   [N6] 大归档 artifact 只传 tier1（tier2/3 已在 Job1 原地推镜像）；所有
+#        artifact 显式 if-no-files-found，失败日志缺失不再把 build 判红进而
+#        级联跳过 Job2/Job3。
+# =====================================================================
 
-name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_测试
+name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_final
+
 on:
   workflow_dispatch:
     inputs:
@@ -24,12 +40,11 @@ permissions:
   actions: write
   packages: write
 
-# ===== 全局环境变量（三个 Job 共用） =====
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: master
 
-  CONFIG_FILE: config/imm_config/86_64.config
+  CONFIG_FILE: config/imm_config/test.config
   FEEDS_CONF: feeds_config/immortalwrt.feeds.conf.default
   DIY_P1_SH: diy_script/immortalwrt_diy/diy-part1.sh
   DIY_P2_SH: diy_script/immortalwrt_diy/diy-part2.sh
@@ -45,6 +60,7 @@ env:
   SOURCE_CODE_PLATFORM: immortalwrt
   DEVICE: xiaoyi_x86
   ARCH: X86_64
+  CACHE_VERSION: v4
   CACHE_ROOT: ${{ github.workspace }}/.cache_tiered
   SRC_DIR: ${{ github.workspace }}/openwrt
   CHUNK_SIZE: 2000M
@@ -55,16 +71,20 @@ env:
   TIER3_PATHS: build_dir/target-x86_64_* staging_dir/target-x86_64_*
 
   DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/immortalwrt-xiaoyi
-  REPO_PREFIX: ghcr.io/${{ github.repository_owner }}/immortalwrt-tier3-cache
+  REPO_PREFIX: ghcr.io/${{ github.repository_owner }}/immortalwrt-tier-cache
 
 jobs:
   # ==================================================================
-  # Job 1：编译完整的固件（到「编译出文件」为止）
+  # Job 1：编译 + 原地推 tier2/tier3 镜像（大归档不出本机）
   # ==================================================================
   build:
     runs-on: ubuntu-24.04
+    outputs:
+      device_name: ${{ steps.compile.outputs.device_name }}
+      file_date: ${{ steps.compile.outputs.file_date }}
+      fp_key: ${{ steps.fp.outputs.fp_key }}
+      ref_name: ${{ github.ref_name }}
     steps:
-      # --- 基础环境 ---
       - name: Check Server Performance
         run: |
           echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
@@ -99,7 +119,6 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      # --- 获取代码与源码 ---
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -107,7 +126,7 @@ jobs:
 
       - name: Prep Cache Script & Login GHCR
         run: |
-          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh
+          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh
           mkdir -p "$CACHE_ROOT"
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
@@ -128,7 +147,6 @@ jobs:
           df -hT $PWD
           git clone ${{ env.REPO_URL }} -b ${{ env.REPO_BRANCH }} ${{ env.SOURCE_DIR }}
 
-      # --- 配置和准备 ---
       - name: Load Custom Feeds (before cache key)
         run: |
           ls
@@ -160,45 +178,39 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
-      # --- 还原缓存 ---
+      # --- 指纹：fp_key 为稳定输入指纹，restore 与 save 两侧共用 [N2] ---
       - name: Fingerprint Stable Tiers
         id: fp
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier2
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier3
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp config
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp patches
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp tier1
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp config
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp patches
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp key
 
       - name: Restore tier1 dl from Actions Cache
+        id: cache_tier1
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CACHE_ROOT }}/tiered/tier1
-          key: dl-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}
+          key: dl-${{ env.CACHE_VERSION }}-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_key }}
           restore-keys: |
-            dl-${{ env.ARCH }}-${{ github.ref_name }}-
-            dl-${{ env.ARCH }}-
+            dl-${{ env.CACHE_VERSION }}-${{ env.ARCH }}-${{ github.ref_name }}-
+            dl-${{ env.CACHE_VERSION }}-${{ env.ARCH }}-
 
-      - name: Restore tier2 toolchain from Actions Cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier2
-          key: tc-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
-          restore-keys: |
-            tc-${{ env.ARCH }}-${{ github.ref_name }}-
-            tc-${{ env.ARCH }}-
+      # [N3] tier2/tier3 不再走 Actions Cache，改从 GHCR 镜像拉回
+      - name: Pull tier2 cache image from GHCR
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pull tier2
 
-      - name: Restore tier3 target from Actions Cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier3
-          key: tr-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_tier1 }}-${{ steps.fp.outputs.fp_config }}-${{ steps.fp.outputs.fp_patches }}
-          restore-keys: |
-            tr-${{ env.ARCH }}-${{ github.ref_name }}-
-            tr-${{ env.ARCH }}-
+      - name: Pull tier3 cache image from GHCR
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pull tier3
+
+      # [N3] tier1 的 Actions Cache 未命中时，用 GHCR 兜底
+      - name: Pull tier1 cache image from GHCR (fallback)
+        if: steps.cache_tier1.outputs.cache-hit != 'true'
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pull tier1
 
       - name: Restore Cache per Tier
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
 
       - name: Download package
         id: package
@@ -207,40 +219,10 @@ jobs:
           make download -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh touchdl
-          df -hT $PWD          
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh touchdl
+          df -hT $PWD
 
-      # ===== 1. 恢复 ccache 缓存（放在编译之前）=====
-      - name: Restore ccache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/openwrt/.ccache
-          key: ccache-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_config }}
-          restore-keys: |
-            ccache-${{ env.ARCH }}-${{ github.ref_name }}-
-            ccache-${{ env.ARCH }}-
-
-      # ===== 2. 启用 ccache =====
-      - name: Enable ccache
-        run: |
-          echo "CONFIG_CCACHE=y" >> openwrt/.config
-          cd openwrt && make defconfig
-          echo "CCACHE_DIR=${{ github.workspace }}/openwrt/.ccache" >> $GITHUB_ENV
-          echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=time_macros,file_macro,include_file_mtime,include_file_ctime" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}/openwrt" >> $GITHUB_ENV
-      # ========== ccache（需要时取消注释）==========
-      #- name: Setup ccache
-      #  run: |
-      #     echo "CONFIG_CCACHE=y" >> openwrt/.config
-      #     cd openwrt && make defconfig
-      #     echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-      #     echo "CCACHE_MAXSIZE=2G" >> $GITHUB_ENV
-      #     echo "CCACHE_SLOPPINESS=time_macros,file_macro,include_file_mtime,include_file_ctime" >> $GITHUB_ENV
-      #     echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
-      # ============================================
-
-      # --- 编译固件 ---
+      # --- 编译固件：DEVICE_NAME/FILE_DATE 走本步骤 output [N4] ---
       - name: Compile the firmware
         id: compile
         run: |
@@ -250,18 +232,13 @@ jobs:
           make -j$(nproc) || make -j1 || make -j1 V=s
           echo "status=success" >> $GITHUB_OUTPUT
           grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+          [ -s DEVICE_NAME ] && echo "device_name=$(cat DEVICE_NAME)" >> $GITHUB_OUTPUT
+          echo "file_date=$(date +"%Y%m%d%H%M")" >> $GITHUB_OUTPUT
 
       - name: Check space usage
         if: (!cancelled())
         run: df -hT
-      # ===== 4. 保存 ccache 缓存（放在编译之后）=====
-      - name: Save ccache
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ github.workspace }}/openwrt/.ccache
-          key: ccache-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_config }}
+
       - name: Setup SSH debug (optional)
         uses: mxschmitt/action-tmate@v3
         timeout-minutes: 15
@@ -269,23 +246,32 @@ jobs:
         with:
           detached: true
 
-      # --- 缓存变化判定 + 打包三层缓存（供 Job2 备份）---
+      # --- 缓存变化判定 + 打包 ---
       - name: Gate Tiers
         id: gate
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh gate tier2 "$CACHE_ROOT/base_compilation_marker"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh gate tier3 "$CACHE_ROOT/base_compilation_marker"
 
-      - name: Pack all tiers for backup
+      - name: Pack all tiers
         id: pack
         run: |
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier2 "$CACHE_ROOT/tiered/tier2" || true
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh pack tier3 "$CACHE_ROOT/tiered/tier3" || true
-          # make 期间可能下载了新包，重算 tier1 指纹
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh fp tier1
+          # 不再对 pack 失败静默 || true：路径缺失脚本自身只 warning，
+          # 真失败（tar/压缩出错）必须让 Job 变红暴露，而不是上传空壳。
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh fp tier1
 
-      # --- 整理固件目录 ---
+      # [N1] 大归档原地推镜像，不经 artifact、不占 Actions Cache 配额
+      - name: Push tier2 cache image
+        if: steps.gate.outputs.changed_tier2 == '1'
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh push tier2
+
+      - name: Push tier3 cache image
+        if: steps.gate.outputs.changed_tier3 == '1'
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh push tier3
+
       - name: Organize files
         id: organize
         if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -296,14 +282,15 @@ jobs:
           echo "FIRMWARE_REL=${PWD#$GITHUB_WORKSPACE/}" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
-      # --- 把缓存层与固件交棒给后续 Job（跨 runner 用 artifact 传递）---
-      - name: Upload cache tiers for backup
+      # [N6] 只交棒 tier1 归档（tier2/3 已推镜像），空目录直接报错不再静默
+      - name: Upload tier1 archive for backup
         if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: cache-tiered-${{ github.run_id }}
-          path: ${{ env.CACHE_ROOT }}/tiered
+          name: cache-tier1-${{ github.run_id }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier1
           retention-days: 1
+          if-no-files-found: error
 
       - name: Upload firmware for upload-job
         if: steps.organize.outputs.status == 'success'
@@ -312,18 +299,20 @@ jobs:
           name: firmware-${{ github.run_id }}
           path: ${{ env.FIRMWARE_ABS }}
           retention-days: 1
+          if-no-files-found: error
 
       - name: Write build meta
         run: |
           {
             echo "ARCH=${ARCH}"
             echo "REF_NAME=${GITHUB_REF_NAME}"
-            echo "DEVICE_NAME=${DEVICE_NAME}"
-            echo "FILE_DATE=${FILE_DATE}"
+            echo "DEVICE_NAME=${{ steps.compile.outputs.device_name }}"
+            echo "FILE_DATE=${{ steps.compile.outputs.file_date }}"
             echo "FIRMWARE_REL=${FIRMWARE_REL}"
             echo "FP_TIER1=${{ steps.fp.outputs.fp_tier1 }}"
             echo "FP_CONFIG=${{ steps.fp.outputs.fp_config }}"
             echo "FP_PATCHES=${{ steps.fp.outputs.fp_patches }}"
+            echo "FP_KEY=${{ steps.fp.outputs.fp_key }}"
             echo "FP_TIER1_END=${{ steps.pack.outputs.fp_tier1 }}"
             echo "CHANGED_TIER2=${{ steps.gate.outputs.changed_tier2 }}"
             echo "CHANGED_TIER3=${{ steps.gate.outputs.changed_tier3 }}"
@@ -337,8 +326,9 @@ jobs:
           name: build-meta-${{ github.run_id }}
           path: ${{ github.workspace }}/build_meta.env
           retention-days: 1
+          if-no-files-found: error
 
-      # --- 失败日志上传（属编译阶段）---
+      # --- 失败日志：路径缺失不再把 build 判红（防止级联跳过 Job2/Job3）[N6] ---
       - name: Upload tail log
         if: always()
         uses: actions/upload-artifact@v4
@@ -346,6 +336,7 @@ jobs:
           name: imm-tail-${{ github.run_id }}
           path: /tmp/imm-build.log
           retention-days: 3
+          if-no-files-found: ignore
       - name: Upload IMM build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -355,6 +346,7 @@ jobs:
             logserror.txt
             logscompile.txt
           retention-days: 3
+          if-no-files-found: ignore
       - name: Upload compile log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -362,10 +354,10 @@ jobs:
           name: immortalwrt-x86-compile-log
           path: ${{ github.workspace }}/openwrt/compile.log
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
   # ==================================================================
-  # Job 2：三层缓存备份（tier1/2/3 save 到 Actions Cache + 推 tier3 镜像）
+  # Job 2：tier1 缓存备份（Actions Cache，key 与 Job1 restore 完全一致 [N2]）
   # ==================================================================
   backup:
     needs: build
@@ -383,53 +375,27 @@ jobs:
           name: build-meta-${{ github.run_id }}
           path: ${{ github.workspace }}
 
-      - name: Fetch packed tiers
+      - name: Fetch tier1 archive
         uses: actions/download-artifact@v4
         with:
-          name: cache-tiered-${{ github.run_id }}
-          path: ${{ env.CACHE_ROOT }}/tiered
+          name: cache-tier1-${{ github.run_id }}
+          path: ${{ env.CACHE_ROOT }}/tiered/tier1
 
       - name: Read meta & Prep script
         run: |
-          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh
+          chmod +x $GITHUB_WORKSPACE/scripts/cache_tiered_x86_final.sh
           set -a; source $GITHUB_WORKSPACE/build_meta.env; set +a
           echo "ARCH=$ARCH" >> $GITHUB_ENV
           echo "REF_NAME=$REF_NAME" >> $GITHUB_ENV
-          echo "FP_TIER1=$FP_TIER1" >> $GITHUB_ENV
-          echo "FP_CONFIG=$FP_CONFIG" >> $GITHUB_ENV
-          echo "FP_PATCHES=$FP_PATCHES" >> $GITHUB_ENV
-          echo "FP_TIER1_END=$FP_TIER1_END" >> $GITHUB_ENV
-          echo "CHANGED_TIER2=$CHANGED_TIER2" >> $GITHUB_ENV
-          echo "CHANGED_TIER3=$CHANGED_TIER3" >> $GITHUB_ENV
-          echo ">>> 缓存层落地情况："
-          ls -lh $CACHE_ROOT/tiered || true
-
-      - name: Login GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "FP_KEY=$FP_KEY" >> $GITHUB_ENV
+          echo ">>> tier1 归档落地情况："
+          ls -lh $CACHE_ROOT/tiered/tier1 || true
 
       - name: Save tier1 to Actions Cache
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CACHE_ROOT }}/tiered/tier1
-          key: dl-${{ env.ARCH }}-${{ env.REF_NAME }}-${{ env.FP_TIER1_END }}
-
-      - name: Save tier2 to Actions Cache
-        if: env.CHANGED_TIER2 == '1'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier2
-          key: tc-${{ env.ARCH }}-${{ env.REF_NAME }}-${{ env.FP_TIER1 }}-${{ env.FP_CONFIG }}-${{ env.FP_PATCHES }}
-
-      - name: Save tier3 to Actions Cache
-        if: env.CHANGED_TIER3 == '1'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CACHE_ROOT }}/tiered/tier3
-          key: tr-${{ env.ARCH }}-${{ env.REF_NAME }}-${{ env.FP_TIER1 }}-${{ env.FP_CONFIG }}-${{ env.FP_PATCHES }}
-
-      - name: Push tier3 cache image
-        if: env.CHANGED_TIER3 == '1'
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86.sh image tier3
+          key: dl-${{ env.CACHE_VERSION }}-${{ env.ARCH }}-${{ env.REF_NAME }}-${{ env.FP_KEY }}
 
   # ==================================================================
   # Job 3：上传（固件制品 / Docker 镜像 / Release）
@@ -466,7 +432,6 @@ jobs:
       - name: Set firmware path
         run: echo "FIRMWARE=$GITHUB_WORKSPACE/firmware_out" >> $GITHUB_ENV
 
-      # --- 上传整个 bin 目录（可选，UPLOAD_BIN_DIR）---
       - name: Upload bin directory
         uses: actions/upload-artifact@v4
         if: env.UPLOAD_BIN_DIR == 'true'
@@ -474,7 +439,6 @@ jobs:
           name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
-      # --- 上传固件制品 ---
       - name: Upload firmware directory
         uses: actions/upload-artifact@v4
         if: env.UPLOAD_FIRMWARE == 'true'
@@ -482,7 +446,6 @@ jobs:
           name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
           path: ${{ env.FIRMWARE }}
 
-      # --- 构建并推送 Docker 镜像 ---
       - name: Prepare Docker context
         run: |
           ROOTFS="$(find "$GITHUB_WORKSPACE/firmware_out" -name '*rootfs*.tar.gz' | head -n1)"
@@ -504,14 +467,13 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ github.workspace }}/docker_ctx
-          file: scripts/Dockerfile.firmware
+          file: ${{ github.workspace }}/docker_ctx/Dockerfile.firmware   # [N5] file 相对 context 解析，必须给 context 内路径
           push: true
           tags: ${{ env.DOCKER_IMAGE }}:${{ github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      # --- 发布 Release ---
       - name: Generate release tag
         id: tag
         if: env.UPLOAD_RELEASE == 'true'
