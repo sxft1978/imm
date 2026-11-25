@@ -20,7 +20,7 @@
 #        级联跳过 Job2/Job3。
 # =====================================================================
 
-name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_测试
+name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_final
 
 on:
   workflow_dispatch:
@@ -216,7 +216,6 @@ jobs:
         id: package
         run: |
           cd openwrt
-          make defconfig
           make download -j8
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
@@ -407,6 +406,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
+        uses: actions/checkout
         uses: actions/checkout@v4
         with:
           submodules: true
