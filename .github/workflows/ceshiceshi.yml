@@ -20,7 +20,7 @@
 #        级联跳过 Job2/Job3。
 # =====================================================================
 
-name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_final
+name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_test
 
 on:
   workflow_dispatch:
