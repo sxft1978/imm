@@ -406,7 +406,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout
         uses: actions/checkout@v4
         with:
           submodules: true
