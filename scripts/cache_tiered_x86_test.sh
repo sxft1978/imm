@@ -202,4 +202,127 @@ latest_archive_in() {
 
 cmd_restore_auto() {
   local dir="$OUTPUT_DIR"
-  [ -d "$dir" ] || { echo "::warning::
+  [ -d "$dir" ] || { echo "::warning::$dir 不存在，冷启动编译"; return 0; }
+  [ -d "$SRC_DIR" ] || { echo "::warning::SRC_DIR 不存在，跳过还原"; return 0; }
+  cd "$SRC_DIR" || return 0
+
+  local found=0
+  for tier in tier1 tier2 tier3; do
+    local arch
+    arch="$(latest_archive_in "$dir" "$tier")"
+    if [ -n "$arch" ] && [ -f "$arch" ]; then
+      echo "还原 $arch ..."
+      tar -xf "$arch" -C . || { echo "::error::还原失败: $arch"; return 1; }
+      found=1
+    fi
+  done
+  touch_dl
+  [ "$found" = "1" ] || echo "::warning::未发现任何 tier 归档，冷启动编译"
+  return 0
+}
+
+cmd_restore_clean() {
+  echo "force_rebuild=clean：跳过缓存还原，执行纯净编译"
+  return 0
+}
+
+# ---------- push：归档封装成 scratch 镜像并推送（原 image，保留别名） ----------
+cmd_push() {
+  local tier="${1:-}"
+  [ -n "$tier" ] || { echo "::error::push 缺少 tier 参数"; return 1; }
+  command -v docker >/dev/null 2>&1 || { echo "::error::docker 不可用，无法推送 ${tier} 镜像"; return 1; }
+
+  local arch
+  arch="$(latest_archive_in "$OUTPUT_DIR" "$tier")"
+  [ -n "$arch" ] || { echo "::warning::未找到 ${tier} 归档，跳过镜像推送"; return 0; }
+
+  local fp pkg ctx
+  fp="$(basename "$arch")"; fp="${fp#${tier}-}"; fp="${fp%.tar.*}"
+  pkg="${REPO_PREFIX}-${tier}"
+  ctx="$(mktemp -d)"
+  cp "$arch" "$ctx/archive.tar.zst" 2>/dev/null || cp "$arch" "$ctx/archive.tar.gz"
+  local iname="archive.tar.zst"; [ -f "$ctx/archive.tar.gz" ] && iname="archive.tar.gz"
+  # [FIX-1] 镜像内文件落地路径必须是 /<tier>/<归档名>，与 cmd_pull 的
+  #         docker cp "${cname}:/${tier}/archive.tar.zst" 完全对齐；旧版写成
+  #         COPY ... /tierN（文件直接落在根），导致 pull 端 cp 永远取不到归档。
+  # [FIX-2] scratch 镜像无 CMD/ENTRYPOINT 时 docker create 报 "no command specified"
+  #         （截图里 tier2/3 报错根因）。补 CMD 仅为满足 create 参数校验，不实际执行。
+  printf 'FROM scratch\nCOPY %s /%s/%s\nCMD ["/%s/%s"]\n' "$iname" "$tier" "$iname" "$tier" "$iname" > "$ctx/Dockerfile"
+
+  echo "构建并推送 ${pkg}:${fp} 与 ${pkg}:latest"
+  docker build -t "${pkg}:${fp}" -t "${pkg}:latest" "$ctx" || { echo "::error::镜像构建失败"; rm -rf "$ctx"; return 1; }
+  docker push "${pkg}:${fp}"   || { echo "::error::镜像推送失败(指定标签)"; rm -rf "$ctx"; return 1; }
+  docker push "${pkg}:latest"  || echo "::warning::镜像推送失败(latest)"
+  rm -rf "$ctx"
+  emit_output "pushed_${tier}" "${pkg}:${fp}"
+  echo "${pkg}:${fp}"
+}
+
+# ---------- 【改动 N】pull：从 GHCR 拉回归档到 OUTPUT_DIR/tierN/ ----------
+# 目标归档已在位（同 key 的 Actions Cache 命中、或本次已拉过）则跳过。
+# 拉不到（冷启动 / latest 被清理 / 网络抖动）只 warning 返回 0，让编译照常冷启动。
+cmd_pull() {
+  local tier="${1:-}"
+  [ -n "$tier" ] || { echo "::error::pull 缺少 tier 参数"; return 1; }
+  command -v docker >/dev/null 2>&1 || { echo "::error::docker 不可用，无法拉取 ${tier} 镜像"; return 1; }
+
+  local pkg="${REPO_PREFIX}-${tier}"
+  if [ -n "$(latest_archive_in "$OUTPUT_DIR" "$tier")" ]; then
+    echo "${tier} 归档已在位（Actions Cache 命中或已拉取），跳过 GHCR 拉取"
+    return 0
+  fi
+
+  if ! docker pull "${pkg}:latest" >/dev/null 2>&1; then
+    echo "::warning::GHCR 上没有 ${pkg}:latest（首次运行或包被清理），本次冷启动"
+    return 0
+  fi
+
+  local cname="${tier}-pull-$$"
+  docker create --name "$cname" "${pkg}:latest" >/dev/null || { echo "::warning::create 失败，冷启动"; return 0; }
+  mkdir -p "${OUTPUT_DIR}/${tier}"
+  # 落地名固定为 tierN-pull-latest.tar.gz（扩展名仅占位；push 端 zstd/gzip 皆有可能，
+  # restore 端统一用 tar -xf 自动识别，不依赖扩展名）
+  local dest="${OUTPUT_DIR}/${tier}/${tier}-pull-latest.tar.gz"
+  if docker cp "${cname}:/${tier}/archive.tar.zst" "$dest" 2>/dev/null \
+     || docker cp "${cname}:/${tier}/archive.tar.gz" "$dest" 2>/dev/null; then
+    docker rm -f "$cname" >/dev/null 2>&1
+    echo "${tier} 已从 GHCR 拉回: $dest"
+    return 0
+  fi
+  rm -f "$dest"
+  docker rm -f "$cname" >/dev/null 2>&1
+  echo "::warning::docker cp 未取到归档，本次冷启动"
+  return 0
+}
+
+# ---------- 入口 ----------
+cmd_name="${1:-}"; arg1="${2:-}"; arg2="${3:-}"
+
+case "$cmd_name" in
+  fp)
+    case "$arg1" in
+      tier1|tier2|tier3) cmd_fp "$arg1" ;;
+      config)  cmd_fp_config ;;
+      patches) cmd_fp_patches ;;
+      key)     cmd_fp_key ;;          # 【改动 M】
+      *) echo "用法: $0 fp <tier1|tier2|tier3|config|patches|key>"; exit 1 ;;
+    esac
+    ;;
+  gate)    cmd_gate "$arg1" "$arg2" ;;
+  pack)    cmd_pack "$arg1" "$arg2" ;;
+  restore)
+    case "$arg1" in
+      auto)  cmd_restore_auto ;;
+      clean) cmd_restore_clean ;;
+      *)     cmd_restore "$arg1" "$arg2" ;;
+    esac
+    ;;
+  touchdl) touch_dl ;;
+  push)    cmd_push "$arg1" ;;
+  image)   cmd_push "$arg1" ;;        # 向后兼容别名
+  pull)    cmd_pull "$arg1" ;;        # 【改动 N】
+  *)
+    echo "用法: $0 <fp|gate|pack|restore|push|pull|touchdl> <参数...>"
+    exit 1
+    ;;
+esac
