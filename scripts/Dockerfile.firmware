@@ -1,18 +1,13 @@
-# 固件镜像 Dockerfile
-# 用途：将编译好的 OpenWrt 固件打包进镜像，供发布/分发使用
-# 位置：scripts/Dockerfile.firmware
-# 使用精简基础镜像，减小体积
-FROM alpine:3.20
+# syntax=docker/dockerfile:1.7
+# ImmortalWrt 固件根文件系统镜像
+# 构建上下文 = docker_ctx/，内含 openwrt-rootfs.tar.gz
+# 由工作流 Job3「Prepare Docker context」负责准备
 
-# 元数据（可选）
-LABEL maintainer="imm2026"
-LABEL description="OpenWrt firmware artifact image"
+FROM scratch
 
-# 创建固件存放目录
-WORKDIR /firmware
+# ADD 会自动解压 tar.gz 到镜像根目录
+# 前提：tar 顶层直接是 etc/ lib/ usr/ sbin/ bin/ 等（ImmortalWrt 标准 rootfs tar）
+ADD openwrt-rootfs.tar.gz /
 
-# 将 rootfs 压缩包复制进镜像（工作流 docker_ctx 中已准备好 openwrt-rootfs.tar.gz）
-COPY openwrt-rootfs.tar.gz /firmware/
-
-# 容器启动时列出固件文件（便于验证）
-CMD ["ls", "-lh", "/firmware/"]
+# procd 作为 PID1 入口
+ENTRYPOINT ["/sbin/init"]
