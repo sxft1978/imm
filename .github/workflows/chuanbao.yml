@@ -196,7 +196,8 @@ jobs:
           
       - name: Rename config
         run: mv openwrt/.config   openwrt/imm.config
-      - name upload config
+        
+      - name: upload config
         if: always()
         uses: actions/upload-artifact@v4
         with:
