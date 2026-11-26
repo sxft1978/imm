@@ -1,4 +1,4 @@
-name: ImmortalWrt_传包
+uname: ImmortalWrt_传包
 on:
    workflow_dispatch:
     inputs:
@@ -195,7 +195,8 @@ jobs:
           compression-level: 6
           
       - name: Upload config
-        run:cp openwrt/.config   openwrt/imm.config
+        run:|
+           mv openwrt/.config   openwrt/imm.config
         if: always()
         uses: actions/upload-artifact@v4
         with:
