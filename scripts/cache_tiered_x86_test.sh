@@ -55,7 +55,6 @@ calc_fp() {
 cmd_fp() {
     local tier="${1:-}"          # 第 56 行
     fp="$(calc_fp "$tier")" || die "fp 非法 tier: $tier"   # 第 57 行 ← 只保留这一行
-    local fp
     echo "fp_tier1=$fp"
     echo "fp_tier1=$fp" >> "$GITLAB_OUTPUT"
 }
