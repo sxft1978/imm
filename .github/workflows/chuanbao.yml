@@ -127,7 +127,7 @@ jobs:
           
           echo "=== 启动 ttyd ==="
           # 用 -W 代替 --writable，用 -- 分隔启动命令
-          ./ttyd -p 7681 -i 0.0.0.0 -W -- /bin/bash > /tmp/ttyd.log 2>&1 &
+          ./ttyd -p 7681 -i 0.0.0.0 -W -c admin:123 -- /bin/bash > /tmp/ttyd.log 2>&1 &
           sleep 3
           
           echo "=== ttyd 日志 ==="
