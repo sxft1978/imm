@@ -109,6 +109,13 @@ jobs:
           TARGET_DEVICE_ARCH="$(grep "^CONFIG_TARGET_.*=y$" ".config" | head -n 1 | sed 's/^CONFIG_TARGET_//g' | sed 's/=y//g' | awk -F '_' '{print $1}')"
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
+          
+      - name: Setup SSH debug (optional)
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
+        if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
+        with:
+          detached: true
 
       - name: Download package
         id: package
