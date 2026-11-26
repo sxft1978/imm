@@ -323,8 +323,7 @@ jobs:
         with:
           path: ${{ github.workspace }}/openwrt/.ccache
           key: ccache-${{ env.ARCH }}-${{ github.ref_name }}-${{ steps.fp.outputs.fp_config }}
-      - name: Setup SSH debug (optional)
-        uses: mxschmitt/action-tmate@v3
+    
 
       # --- 5. 保存新缓存（为下一次编译加速做准备） ---
 
