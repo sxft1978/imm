@@ -6,7 +6,7 @@ on:
         type: boolean
         description: '编译后 SSH 调试（是/否）'
         required: false
-        default: 'false'
+        default: false
       force_rebuild:
         description: '无视缓存纯净重编译'
         required: false
