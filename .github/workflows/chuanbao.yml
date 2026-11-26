@@ -112,13 +112,55 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
-      
-      - name: 开启 SSH 服务 (Start SSH service)
+      - name: Setup Native SSH & Web Terminal
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled == 'true' }}
+        run: |
+          # 1. 安装 SSH 服务和 ttyd (网页终端)
+          sudo apt-get update
+          sudo apt-get install -y openssh-server wget
+          
+          # 2. 配置并启动 sshd
+          sudo mkdir -p /var/run/sshd
+          echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
+          echo 'PasswordAuthentication yes' | sudo tee -a /etc/ssh/sshd_config
+          # 设置一个临时密码方便你连
+          echo "runner:debug123" | sudo chpasswd
+          sudo /usr/sbin/sshd -D &
+          
+          # 3. 下载 ttyd 和 cloudflared
+          wget -q https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64
+          chmod +x ttyd.x86_64
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          
+          # 4. 启动 ttyd 网页终端 (监听 7681 端口)
+          ./ttyd.x86_64 -p 7681 bash &
+          
+          # 5. 启动 Cloudflare Tunnel，把 22 端口和 7681 端口都映射出去
+          # 这里用 quick tunnel，不需要注册账号
+          ./cloudflared-linux-amd64 tunnel --url http://localhost:7681 --url ssh://localhost:22 2>&1 | tee /tmp/tunnel.log &
+          
+          # 6. 等待隧道建立并提取地址
+          sleep 15
+          echo "=========================================="
+          echo "🌐 Web 终端地址 (浏览器直接打开):"
+          grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1
+          echo "=========================================="
+          echo "🔑 SSH 连接信息:"
+          echo "由于 Cloudflare Quick Tunnel 的 SSH 需要本地装 cloudflared 代理，建议直接用上面的 Web 终端。"
+          echo "如果一定要用 SSH，请在本地执行:"
+          echo "cloudflared access ssh --hostname \$(grep -oP '(?<=https://)[a-z0-9-]+(?=\.trycloudflare\.com)' /tmp/tunnel.log | head -n 1)"
+          echo "=========================================="
+          
+          # 保持运行 1 小时
+          sleep 120
+          
+      #- name: 开启 SSH 服务 (Start SSH service)
         #uses: mxschmitt/action-tmate@v3.24
         #if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
-        uses: lhotari/action-upterm@v1
-        with:
-          wait-timeout-minutes: 2
+        #uses: lhotari/action-upterm@v1
+        #with:
+          #wait-timeout-minutes: 2
            
 
       - name: Download package
