@@ -227,7 +227,8 @@ EOF
   log "已推送: $img"
 }
 
-# ---------- 主入口 -------cmd="${1:-}"
+# ---------- 主入口 -------
+cmd="${1:-}"
 if [ -z "$cmd" ]; then
   echo "用法: $0 <fp|fp_config|fp_patches|fp_key|pull|restore_auto|touchdl|gate|pack|push> [args...]"
   exit 1
