@@ -1,26 +1,8 @@
-# =====================================================================
+# ============================================================
 # Immor_xiaoyi 三层缓存_Docker加速版 —— 三Job拆分 · final 修复版
-#   基于「workflow_三Job拆分_修正版.yml」继续修掉三处根因（编号沿用修复 N1-N6）：
-#
-#   [N1] tier2/tier3 彻底退出 Actions Cache（几十 GB 一次就撑爆 10GB 共享配额，
-#        GitHub 按 LRU 把刚存的连 tier1 一起驱逐——这是 Caches 页只剩 buildkit
-#        小条目、第二次跑完全没恢复的直接根因）。改走 Job1 内 GHCR 镜像 push，
-#        restore 侧用脚本新子命令 pull 经 docker create+cp 取回归档。
-#   [N2] tier1 缓存 key 全部改用稳定输入指纹 fp_key = md5(config+patches)。
-#        原版 restore 用编译前 dl 指纹、Job2 保存用编译后指纹 FP_TIER1_END，
-#        两次 key 必然不同 -> 永不命中（key 自锁）。
-#   [N3] tier2/tier3 的 restore 步骤（原 actions/cache/restore 永 miss）删除，
-#        换成 GHCR pull；tier1 cache 未命中时也走 GHCR pull 兜底。
-#   [N4] DEVICE_NAME/FILE_DATE 从 $GITHUB_ENV 改为 steps.compile 的 GITHUB_OUTPUT
-#        并提升为 Job outputs（原版 meta 里这两项为空，Job3 制品命名连带出错）。
-#   [N5] Job3 的 build-push file 改为 docker_ctx 内绝对路径（file 相对 context
-#        解析，原 scripts/Dockerfile.firmware 必报 not found）。
-#   [N6] 大归档 artifact 只传 tier1（tier2/3 已在 Job1 原地推镜像）；所有
-#        artifact 显式 if-no-files-found，失败日志缺失不再把 build 判红进而
-#        级联跳过 Job2/Job3。
-# =====================================================================
+# ============================================================
 
-name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_test
+name: Immor_xiaoyi三层缓存_Docker加速版_三Job拆分_final
 
 on:
   workflow_dispatch:
@@ -69,14 +51,13 @@ env:
   TIER1_PATHS: dl
   TIER2_PATHS: build_dir/host build_dir/hostpkg staging_dir/host staging_dir/hostpkg
   TIER3_PATHS: build_dir/target-x86_64_* staging_dir/target-x86_64_*
-
   DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/immortalwrt-xiaoyi
   REPO_PREFIX: ghcr.io/${{ github.repository_owner }}/immortalwrt-tier-cache
 
 jobs:
-  # ==================================================================
+  # ============================================================
   # Job 1：编译 + 原地推 tier2/tier3 镜像（大归档不出本机）
-  # ==================================================================
+  # ============================================================
   build:
     runs-on: ubuntu-24.04
     outputs:
@@ -178,14 +159,15 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
 
-      # --- 指纹：fp_key 为稳定输入指纹，restore 与 save 两侧共用 [N2] ---
+      # --- 指纹：fp_key 为稳定输入指纹，restore 与 save 两侧共用 [N2]
+      # 【修复】fp config/patches/key 改为 fp_config/fp_patches/fp_key
       - name: Fingerprint Stable Tiers
         id: fp
         run: |
           bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp tier1
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp config
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp patches
-          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp key
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp_config
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp_patches
+          bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh fp_key
 
       - name: Restore tier1 dl from Actions Cache
         id: cache_tier1
@@ -209,8 +191,9 @@ jobs:
         if: steps.cache_tier1.outputs.cache-hit != 'true'
         run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pull tier1
 
+      # 【修复】restore auto/clean 改为 restore_auto
       - name: Restore Cache per Tier
-        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh restore ${{ inputs.force_rebuild && 'clean' || 'auto' }}
+        run: bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh restore_auto
 
       - name: Download package
         id: package
@@ -222,7 +205,7 @@ jobs:
           bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh touchdl
           df -hT $PWD
 
-      # --- 编译固件：DEVICE_NAME/FILE_DATE 走本步骤 output [N4] ---
+      # --- 编译固件：DEVICE_NAME/FILE_DATE 走本步骤 output [N4]
       - name: Compile the firmware
         id: compile
         run: |
@@ -246,7 +229,7 @@ jobs:
         with:
           detached: true
 
-      # --- 缓存变化判定 + 打包 ---
+      # --- 缓存变化判定 + 打包
       - name: Gate Tiers
         id: gate
         run: |
@@ -256,8 +239,6 @@ jobs:
       - name: Pack all tiers
         id: pack
         run: |
-          # 不再对 pack 失败静默 || true：路径缺失脚本自身只 warning，
-          # 真失败（tar/压缩出错）必须让 Job 变红暴露，而不是上传空壳。
           bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pack tier1 "$CACHE_ROOT/tiered/tier1"
           bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pack tier2 "$CACHE_ROOT/tiered/tier2"
           bash $GITHUB_WORKSPACE/scripts/cache_tiered_x86_test.sh pack tier3 "$CACHE_ROOT/tiered/tier3"
@@ -328,7 +309,7 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-      # --- 失败日志：路径缺失不再把 build 判红（防止级联跳过 Job2/Job3）[N6] ---
+      # --- 失败日志：路径缺失不再把 build 判红（防止级联跳过 Job2/Job3）[N6]
       - name: Upload tail log
         if: always()
         uses: actions/upload-artifact@v4
@@ -337,6 +318,7 @@ jobs:
           path: /tmp/imm-build.log
           retention-days: 3
           if-no-files-found: ignore
+
       - name: Upload IMM build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -347,6 +329,7 @@ jobs:
             logscompile.txt
           retention-days: 3
           if-no-files-found: ignore
+
       - name: Upload compile log on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -356,9 +339,9 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # ==================================================================
+  # ============================================================
   # Job 2：tier1 缓存备份（Actions Cache，key 与 Job1 restore 完全一致 [N2]）
-  # ==================================================================
+  # ============================================================
   backup:
     needs: build
     if: always() && needs.build.result == 'success'
@@ -397,9 +380,9 @@ jobs:
           path: ${{ env.CACHE_ROOT }}/tiered/tier1
           key: dl-${{ env.CACHE_VERSION }}-${{ env.ARCH }}-${{ env.REF_NAME }}-${{ env.FP_KEY }}
 
-  # ==================================================================
+  # ============================================================
   # Job 3：上传（固件制品 / Docker 镜像 / Release）
-  # ==================================================================
+  # ============================================================
   upload:
     needs: build
     if: always() && needs.build.result == 'success'
