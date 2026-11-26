@@ -57,6 +57,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          
+      - name: Configure apt mirror
+        run: |
+          sudo sed -i 's|http://us-east-2.ec2.archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
+          sudo apt update
 
       - name: Initialization environment
         env:
@@ -109,18 +114,27 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
-      - name: Setup SSH debug (optional)
-        uses: lhotari/action-upterm@v1
-        #timeout-minutes: 20
+      - name: Setup SSH debug 
+        uses: mxschmitt/action-tmate@v3
         with:
+       # SSH 会话最长保持时间（分钟），建议设大一点，编译耗时长
+          timeout-minutes: 120
+          continue-on-error: false
           limit-access-to-actor: true
-          timeout-minutes: 20
-          #sudo: auto
-          #install-dependencies: true
-        #timeout-minutes: 15
-        #if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
-        #with:
-          #detached: true
+          ssh-only: false
+
+    # 是否在 SSH 断开后继续执行后续步骤
+    # true = SSH 断开后 workflow 继续往下跑
+    # false = SSH 断开后 workflow 停止
+         
+
+    # 限制只有指定 GitHub 用户才能连接 SSH
+    # 留空 = 任何人拿到地址都能连（不安全）
+    #    limit-access-to-actor: true
+
+    # 是否只允许 SSH 连接，不提供 Web 终端
+    # false = 同时提供 SSH 和 Web 两种方式
+    #    ssh-only: false
 
       - name: Download package
         id: package
