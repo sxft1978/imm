@@ -53,14 +53,12 @@ calc_fp() {
 
 # ---------- 子命令实现 -------# fp: 计算 tier1 指纹并输出
 cmd_fp() {
-  local tier="${1:-}"
-  fp="$(calc_fp "$2")" || die "fp 非法 tier: $2"
-  local fp
-  fp="$(calc_fp "$tier")" || die "fp 非法 tier: $tier"
-  echo "fp_tier1=$fp"
-  echo "fp_tier1=$fp" >> "$GITHUB_OUTPUT"
+    local tier="${1:-}"          # 第 56 行
+    fp="$(calc_fp "$tier")" || die "fp 非法 tier: $tier"   # 第 57 行 ← 只保留这一行
+    local fp
+    echo "fp_tier1=$fp"
+    echo "fp_tier1=$fp" >> "$GITLAB_OUTPUT"
 }
-
 # fp_config: 计算配置文件指纹
 cmd_fp_config() {
   local fp=""
