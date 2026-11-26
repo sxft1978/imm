@@ -133,8 +133,9 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           
-          # 4. 启动 ttyd 网页终端 (监听 7681 端口)
-          ./ttyd.x86_64 -p 7681 bash &
+          
+          # 4. 启动 ttyd 网页终端
+          ./ttyd.x86_64 -p 7681 -i 0.0.0.0 script -q -c "bash -i" /dev/null &
           
           # 5. 启动 Cloudflare Tunnel，把 22 端口和 7681 端口都映射出去
           # 这里用 quick tunnel，不需要注册账号
