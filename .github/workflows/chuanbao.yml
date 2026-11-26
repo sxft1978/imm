@@ -172,6 +172,7 @@ jobs:
         run: |
           cd openwrt
           cp .config  imm.config
+          ls -la
            
 
       - name: Download package
