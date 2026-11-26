@@ -104,7 +104,8 @@ jobs:
           df -hT
           cat -A feeds.conf
           ls feeds/packages/lang/
-
+          cp .config imm.config
+   
       - name: Get architecture
         working-directory: ${{ github.workspace }}/openwrt
         run: |
@@ -200,7 +201,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-x86-config
-          path: ${{ github.workspace }}/openwrt/.config
+          path: ${{ github.workspace }}/openwrt/imm.config
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
