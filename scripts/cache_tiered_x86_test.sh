@@ -54,7 +54,7 @@ calc_fp() {
 # ---------- 子命令实现 -------# fp: 计算 tier1 指纹并输出
 cmd_fp() {
   local tier="${1:-}"
-  [ -z "$tier" ] && die "fp 缺少 tier 参数"
+  fp="$(calc_fp "$2")" || die "fp 非法 tier: $2"
   local fp
   fp="$(calc_fp "$tier")" || die "fp 非法 tier: $tier"
   echo "fp_tier1=$fp"
