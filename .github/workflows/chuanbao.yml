@@ -114,7 +114,7 @@ jobs:
           
       
       - name: 开启 SSH 服务 (Start SSH service)
-        uses: mxschmitt/action-tmate@3.24
+        uses: mxschmitt/action-tmate@3
         #if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
         #uses: lhotari/action-upterm@v1
         #with:
