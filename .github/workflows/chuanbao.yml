@@ -3,7 +3,8 @@ on:
    workflow_dispatch:
     inputs:
       ssh_between:
-        description: '编译后 SSH 调试（是/否）'
+        type: boolean
+        description: '编译后 SSH 调试（是/否） (https://github.com/marketplace/actions/debugging-with-tmate)'
         required: false
         default: 'false'
       force_rebuild:
