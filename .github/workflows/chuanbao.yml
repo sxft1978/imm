@@ -114,8 +114,9 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
-      - name: Setup SSH debug 
-        uses: csexton/action-tmate@v3
+      
+      - name: Setup SSH debug
+        uses: csexton/debugger-action@master
         with:
        # SSH 会话最长保持时间（分钟），建议设大一点，编译耗时长
           timeout-minutes: 120
