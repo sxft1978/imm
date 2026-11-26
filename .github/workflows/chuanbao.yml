@@ -194,15 +194,13 @@ jobs:
           if-no-files-found: warn
           compression-level: 6
           
-      - name: Rename config
-        run: mv openwrt/.config   openwrt/imm.config
         
       - name: upload config
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-x86-config
-          path: ${{ github.workspace }}/openwrt/imm.config
+          path: ${{ github.workspace }}/openwrt/.config
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
