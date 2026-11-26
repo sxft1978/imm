@@ -113,7 +113,7 @@ jobs:
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
       - name: Setup Native SSH & Web Terminal
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between_enabled == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between}}
         run: |
           # 1. 安装 SSH 服务和 ttyd (网页终端)
           sudo apt-get update
