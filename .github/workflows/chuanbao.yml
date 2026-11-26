@@ -151,7 +151,14 @@ jobs:
           echo "🌐 Web 终端地址:"
           grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1
           echo "=========================================="
+          echo "🔑 SSH 连接信息:"
+          echo "由于 Cloudflare Quick Tunnel 的 SSH 需要本地装 cloudflared 代理，建议直接用上面的 Web 终端。"
+          echo "如果一定要用 SSH，请在本地执行:"
+          echo "cloudflared access ssh --hostname \$(grep -oP '(?<=https://)[a-z0-9-]+(?=\.trycloudflare\.com)' /tmp/tunnel.log | head -n 1)"
+          echo "=========================================="
           
+          # 保持运行 1 小时
+          sleep 3600
           sleep 3600
           
       - name: 开启 SSH 服务 (Start SSH service)
@@ -188,11 +195,12 @@ jobs:
           compression-level: 6
           
       - name: Upload config
+       run:cp openwrt/.config   openwrt/imm.config
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-x86-config
-          path: ${{ github.workspace }}/openwrt/.config
+          path: ${{ github.workspace }}/openwrt/imm.config
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
