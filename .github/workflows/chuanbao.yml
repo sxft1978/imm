@@ -58,10 +58,7 @@ jobs:
         with:
           fetch-depth: 0
           
-      - name: Configure apt mirror
-        run: |
-          sudo sed -i 's|http://us-east-2.ec2.archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt update
+      
 
       - name: Initialization environment
         env:
