@@ -1,5 +1,4 @@
 name: ImmortalWrt_传包
-
 on:
    workflow_dispatch:
     inputs:
@@ -111,12 +110,13 @@ jobs:
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
       - name: Setup SSH debug (optional)
-        uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 20
+        uses: lhotari/action-upterm@v1
+        #timeout-minutes: 20
         with:
           limit-access-to-actor: true
-          sudo: auto
-          install-dependencies: true
+          timeout-minutes: 20
+          #sudo: auto
+          #install-dependencies: true
         #timeout-minutes: 15
         #if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
         #with:
