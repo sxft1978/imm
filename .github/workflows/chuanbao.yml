@@ -4,7 +4,7 @@ on:
     inputs:
       ssh_between:
         type: boolean
-        description: '编译后 SSH 调试（是/否） (https://github.com/marketplace/actions/debugging-with-tmate)'
+        description: '编译后 SSH 调试（是/否）'
         required: false
         default: 'false'
       force_rebuild:
