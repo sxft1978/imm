@@ -118,7 +118,7 @@ jobs:
         #if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
         uses: lhotari/action-upterm@v1
         with:
-          wait-timeout-minutes: 20
+          wait-timeout-minutes: 2
            
 
       - name: Download package
