@@ -15,19 +15,7 @@ name: Immor_xiaoyi三层缓存_Docker加速版_tteesstt
 # 触发条件：只在网页上手动点击"Run workflow"时运行
 on:
   workflow_dispatch:
-    inputs:
-      # 可选开关：是否需要 SSH 远程调试
-      ssh_between:
-        description: '编译后 SSH 调试（是/否）'
-        required: false
-        default: 'false'
-      # 可选开关：是否无视所有缓存，强制全新重编
-      force_rebuild:
-        description: '无视缓存纯净重编译'
-        required: false
-        type: boolean
-        default: false
-
+    
 # ===== 赋予工作流需要的权限 =====
 permissions:
   contents: write    # 需要权限来提交缓存、打 Release 标签
@@ -322,12 +310,12 @@ jobs:
         run: df -hT
 
       # 步骤20：可选 SSH 调试（如果你点开了调试开关，编译完会暂停 15 分钟等你连进去）
-      - name: Setup SSH debug (optional)
-        uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 15
-        if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
-        with:
-          detached: true
+      #- name: Setup SSH debug (optional)
+      #  uses: mxschmitt/action-tmate@v3
+      #  timeout-minutes: 15
+      #  if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
+      #  with:
+      #    detached: true
           
       # ===== 4. 保存 ccache 缓存（放在编译之后）=====
       - name: Save ccache
