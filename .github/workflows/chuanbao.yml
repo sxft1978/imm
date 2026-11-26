@@ -144,6 +144,16 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
+          
+      - name: Upload config
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-x86-config
+          path: ${{ github.workspace }}/openwrt/.config
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
 
       # ============================================================
       # 第二阶段: 打包并上传整个 openwrt 目录到 Release
