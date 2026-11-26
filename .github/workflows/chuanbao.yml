@@ -195,7 +195,7 @@ jobs:
           compression-level: 6
           
       - name: Upload config
-       run:cp openwrt/.config   openwrt/imm.config
+        run:cp openwrt/.config   openwrt/imm.config
         if: always()
         uses: actions/upload-artifact@v4
         with:
