@@ -113,7 +113,7 @@ jobs:
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
       - name: Setup Native SSH & Web Terminal
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between_enabled == 'true' }}
         run: |
           # 1. 安装 SSH 服务和 ttyd (网页终端)
           sudo apt-get update
@@ -155,7 +155,7 @@ jobs:
           # 保持运行 1 小时
           sleep 120
           
-      #- name: 开启 SSH 服务 (Start SSH service)
+      - name: 开启 SSH 服务 (Start SSH service)
         uses: mxschmitt/action-tmate@v3.24
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between}}
         #uses: lhotari/action-upterm@v1
