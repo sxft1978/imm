@@ -115,14 +115,10 @@ jobs:
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
       
-      - name: Setup SSH debug (optional)
-        uses: mxschmitt/action-tmate@v3
+      - name: 开启 SSH 服务 (Start SSH service)
+        uses: lhotari/action-upterm@v1
         with:
-          detached: true
-          sudo: auto
-          install-dependencies: true
-          limit-access-to-actor: auto
-          connect-timeout-seconds: 600
+          wait-timeout-minutes: 20
            
 
       - name: Download package
