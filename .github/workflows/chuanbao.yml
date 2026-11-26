@@ -1,4 +1,4 @@
-uname: ImmortalWrt_传包
+name: ImmortalWrt_传包
 on:
    workflow_dispatch:
     inputs:
