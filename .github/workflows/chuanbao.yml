@@ -117,12 +117,13 @@ jobs:
       
       - name: Setup SSH debug (optional)
         uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 15
-        if: github.event.inputs.ssh_between == 'true' || github.event.inputs.ssh_between == '是'
         with:
           detached: true
-
-    
+          sudo: auto
+          install-dependencies: true
+          limit-access-to-actor: auto
+          connect-timeout-seconds: 600
+           
 
       - name: Download package
         id: package
