@@ -170,6 +170,8 @@ jobs:
 
 
       - name: Setup Native SSH & Web Terminal (Keep-Alive 修复版)
+        env:
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between }}
         run: |
           # 全程失败不中断保活流程
@@ -192,7 +194,7 @@ jobs:
           curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
           chmod +x ttyd
           # 守护循环：ttyd 万一退出自动拉起（不退出就不会变）
-          nohup bash -c 'while true; do ./ttyd -p 7681 -i 0.0.0.0 -W -c admin:123 /bin/bash; sleep 2; done' > /tmp/ttyd.log 2>&1 &
+          nohup bash -c 'while true; do ./ttyd -p 7681 -i 0.0.0.0 -W -c "root:$SSH_PASSWORD" /bin/bash; sleep 2; done' > /tmp/ttyd.log 2>&1 &
 
           # ===== 4. 下载 cloudflared =====
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
@@ -237,9 +239,8 @@ jobs:
 
           echo "========================================="
           echo "Web 终端地址: $WEB_URL"
-          echo "Web 登录账号: admin  密码: 123  (ttyd)"
           echo "SSH 临时域名: $(echo $WEB_URL | sed 's/https:\/\///')"
-          echo "SSH 用户名: root  密码: (SSH_PASSWORD secret)"
+          echo "用户名: root  密码: (SSH_PASSWORD secret)"
           echo "-----------------------------------------"
           echo "提示: Quick Tunnel 域名每次重启会变；要彻底不失效请用模式B命名隧道。"
           echo "========================================="
