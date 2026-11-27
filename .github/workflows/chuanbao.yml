@@ -116,7 +116,15 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between}}
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl iproute2
+          sudo apt-get install -y curl iproute2 openssh-server
+          # 2. 配置并启动 SSH 服务（后台运行）
+          sudo mkdir -p /var/run/sshd
+          echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
+          echo 'PasswordAuthentication yes' | sudo tee -a /etc/ssh/sshd_config
+          echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
+          
+          # 使用 -D 参数让 sshd 在前台运行，再通过 & 放入系统后台
+          sudo /usr/sbin/sshd -D &
           
           # 下载 ttyd
           curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
@@ -140,21 +148,27 @@ jobs:
           curl -s -o /dev/null -w "HTTP 状态码: %{http_code}\n" http://127.0.0.1:7681
           
           echo "=== 建立隧道 ==="
-          curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared
+          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+
+          # 使用 nohup 和 & 确保隧道在后台持续运行，且不阻塞当前 Step
+          nohup cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &
           
           # 强制用 http2 协议，避免 QUIC 的 UDP 问题
           ./cloudflared tunnel --protocol http2 --url http://localhost:7681 2>&1 | tee /tmp/tunnel.log &
           sleep 15
+          # 等待隧道建立并提取地址
+          sleep 10
+          TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)
           
           echo "=========================================="
           echo "🌐 Web 终端地址:"
           grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1
           echo "=========================================="
-          echo "🔑 SSH 连接信息:"
-          echo "由于 Cloudflare Quick Tunnel 的 SSH 需要本地装 cloudflared 代理，建议直接用上面的 Web 终端。"
-          echo "如果一定要用 SSH，请在本地执行:"
-          echo "cloudflared access ssh --hostname \$(grep -oP '(?<=https://)[a-z0-9-]+(?=\.trycloudflare\.com)' /tmp/tunnel.log | head -n 1)"
+          echo  "🚀 SSH 隧道已在后台启动！"
+          echo "🌐 临时域名: $TUNNEL_URL"
+          echo "🔑 用户名: root"
+          echo "🔑 密码: ${{ secrets.SSH_PASSWORD }}"
           echo "=========================================="
           
           # 保持运行 1 小时
