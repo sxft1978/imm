@@ -127,7 +127,7 @@ jobs:
           
           echo "=== 启动 ttyd ==="
           # 使用 nohup 确保后台运行不被 Actions 杀掉
-          nohup ./ttyd -p 7681 -i 0.0.0.0 -W  -c admin:123 /bin/bash > /tmp/ttyd.log 2>&1 &
+          nohup ./ttyd -p 7681 -i 0.0.0.0 -W  -c root:${{ secrets.SSH_PASSWORD }} /bin/bash > /tmp/ttyd.log 2>&1 &
           sleep 3
           
           echo "=== ttyd 日志 ==="
