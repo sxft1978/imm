@@ -112,63 +112,7 @@ jobs:
           echo "TARGET_DEVICE_ARCH=${TARGET_DEVICE_ARCH}" >>$GITHUB_ENV
           echo "MIXKEY=X86_64" >>$GITHUB_ENV
           
-      - name: Setup Native SSH & Web Terminal
-        env:
-          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between}}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y curl iproute2                   
-          # 下载 ttyd
-          curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
-          chmod +x ttyd          
-          echo "=== ttyd 版本 ==="
-          ./ttyd --version          
-          echo "=== 启动 ttyd ==="
-          # 使用 nohup 确保后台运行不被 Actions 杀掉
-          nohup ./ttyd -p 7681 -i 0.0.0.0 -W  -c "root:$SSH_PASSWORD" /bin/bash > /tmp/ttyd.log 2>&1 &
-          sleep 3          
-          echo "=== ttyd 日志 ==="
-          cat /tmp/ttyd.log          
-          echo "=== 端口检查 ==="
-          ss -tlnp | grep 7681          
-          echo "=== 本地访问测试 ==="
-          curl -s -o /dev/null -w "HTTP 状态码: %{http_code}\n" http://127.0.0.1:7681          
-          echo "=== 建立隧道 ==="
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared-linux-amd64 
-          # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
-          # 使用 nohup 确保后台运行
-          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 2>&1 |  tee /tmp/tunnel.log &
-          # 6. 等待隧道建立并提取地址
-          echo "=== 等待隧道建立... ==="
-          sleep 15          
-          WEB_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)         
-          # 7. 连通性测试 (循环检测直到域名生效)
-          if [ -n "$WEB_URL" ]; then
-            echo "=== 检测域名连通性 ==="
-            for i in {1..5}; do
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEB_URL)
-              if [ "$HTTP_CODE" != "000" ]; then
-                echo "域名已生效! (HTTP状态码: $HTTP_CODE)"
-                break
-              fi
-              echo "域名尚未生效，第 $i 次重试..."
-              sleep 10
-            done
-          fi
-
-          echo "========================================="
-          echo "🚀 隧道已在后台启动！"
-          echo "🌐 Web 终端地址: $WEB_URL"        
-          echo "👤 Web 登录账号: root"
-          echo "🔑 Web 登录密码: ${{ secrets.SSH_PASSWORD }}"
-          echo "-----------------------------------------"
-                    
-          # 保持运行 1 小时
-          sleep 10
-
-
+     
       - name: Setup Native SSH & Web Terminal (Keep-Alive 修复版)
         env:
           SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
