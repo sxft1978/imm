@@ -124,7 +124,7 @@ jobs:
           echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
           
           # 使用 -D 参数让 sshd 在前台运行，再通过 & 放入系统后台
-          sudo /usr/sbin/sshd -D &
+          sudo /usr/sbin/sshd
           
           # 下载 ttyd
           curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
