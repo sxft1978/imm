@@ -118,13 +118,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl iproute2 openssh-server wget
           # 2. 配置并启动 SSH 服务（后台运行）
-          sudo mkdir -p /var/run/sshd
-          echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
-          echo 'PasswordAuthentication yes' | sudo tee -a /etc/ssh/sshd_config
-          echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
+          #sudo mkdir -p /var/run/sshd
+          #echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
+          #echo 'PasswordAuthentication yes' | sudo tee -a /etc/ssh/sshd_config
+          # echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
           
           # 使用 -D 参数让 sshd 在前台运行，再通过 & 放入系统后台
-          sudo /usr/sbin/sshd
+          #sudo /usr/sbin/sshd
           
           # 下载 ttyd
           curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
