@@ -139,11 +139,12 @@ jobs:
           chmod +x cloudflared-linux-amd64 
           # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
           # 使用 nohup 确保后台运行
-          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 2>&1 |  tee /tmp/tunnel.log &
+          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 2>&1 |  tee /tmp/tunnel.log &
           # 6. 等待隧道建立并提取地址
           echo "=== 等待隧道建立... ==="
           sleep 15          
           WEB_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
+          SSH_URL=$(grep -oP 'ssh "root:$SSH_PASSWORD"@[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
           # 7. 连通性测试 (循环检测直到域名生效)
           if [ -n "$WEB_URL" ]; then
             echo "=== 检测域名连通性 ==="
@@ -161,12 +162,13 @@ jobs:
           echo "========================================="
           echo "🚀 隧道已在后台启动！"
           echo "🌐 Web 终端地址: $WEB_URL"
+          echo "🌐 SSH 终端地址: $SSH_URL"
           echo "👤 Web 登录账号: root"
           echo "🔑 Web 登录密码: ${{ secrets.SSH_PASSWORD }}"
           echo "-----------------------------------------"
                     
           # 保持运行 1 小时
-          sleep 3600
+          sleep 1800
           
       - name: 开启 SSH 服务 (Start SSH service)
         #uses: mxschmitt/action-tmate@v3.24
