@@ -146,7 +146,7 @@ jobs:
                               
           # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
           # 使用 nohup 确保后台运行
-          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 > /tmp/tunnel.log 2>&1 &
+          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681  > /tmp/tunnel.log 2>&1 &
           
           # 6. 等待隧道建立并提取地址
           echo "=== 等待隧道建立... ==="
@@ -174,10 +174,6 @@ jobs:
           echo "👤 Web 登录账号: root"
           echo "🔑 Web 登录密码: ${{ secrets.SSH_PASSWORD }}"
           echo "-----------------------------------------"
-          echo "🔑 SSH 临时域名: $(echo $WEB_URL | sed 's/https:\/\///')"
-          echo "🔑 SSH 用户名: root"
-          echo "🔑 SSH 密码: ${{ secrets.SSH_PASSWORD }}"
-          echo "========================================="
                     
           # 保持运行 1 小时
           sleep 3600
