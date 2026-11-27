@@ -148,8 +148,8 @@ jobs:
                               
           # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
           # 使用 nohup 确保后台运行
-          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681  > /tmp/tunnel.log 2>&1 &
-          
+          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681  -url ssh://localhost:22 2>&1 |  tee /tmp/tunnel.log &
+
           # 6. 等待隧道建立并提取地址
           echo "=== 等待隧道建立... ==="
           sleep 15
@@ -166,7 +166,7 @@ jobs:
                 break
               fi
               echo "域名尚未生效，第 $i 次重试..."
-              sleep 5
+              sleep 10
             done
           fi
 
