@@ -17,6 +17,85 @@ if [ "$GITHUB_ACTIONS" = "true" ] && [ -n "$GITHUB_RUN_ID" ]; then
 else
     PATCHES_SRC_DIR="../imm"
 fi
+# ---------- 工具函数：注入 feed 包 ----------
+# 用法：inject_feed <仓库URL> <feed目录名> <路径1> ["路径2"] ...
+inject_feed() {
+    # 参数校验：至少需要 仓库URL + feed目录名
+    if [ $# -lt 2 ]; then
+        echo "❌ 用法错误：inject_feed <repo_url> <feed_dir> <paths...>"
+        return 1
+    fi
+
+    local repo_url="$1"
+    local feed_dir="$2"
+    shift 2
+    local paths=("$@")
+
+    local temp_repo="temp_repo"
+    local fallback_time
+
+    echo "🚀 正在从 ${repo_url} 极速拉取至 ${feed_dir} ..."
+
+    # 清理可能残留的临时仓库
+    rm -rf "$temp_repo"
+
+    # 稀疏克隆：仅拉取目标路径，大幅减少下载量
+    # --filter=blob:none 延迟下载文件内容，--depth=1 只取最新提交
+    if ! git clone --filter=blob:none --sparse --depth=1 \
+        "$repo_url" "$temp_repo" > /dev/null 2>&1; then
+        echo "❌ 克隆 ${repo_url} 失败，请检查网络后重试"
+        return 1
+    fi
+
+    # 设置稀疏检出范围，仅保留需要的路径
+    git -C "$temp_repo" sparse-checkout set "${paths[@]}" > /dev/null 2>&1
+
+    # 兜底时间戳：取仓库最近一次提交时间，防止 git log 无结果时 touch 报错
+    fallback_time="$(git -C "$temp_repo" log -1 --format=%cd --date=unix 2>/dev/null || true)"
+    fallback_time="${fallback_time:-$(date +%s)}"
+
+    # 逐个注入路径
+    for p in "${paths[@]}"; do
+        # 仅处理稀疏检出中实际存在的路径
+        if [ -d "$temp_repo/$p" ]; then
+            local pkg_name
+            pkg_name="$(basename "$p")"
+            local dest_path="$feed_dir/$pkg_name"
+            local feed_name
+            feed_name="$(echo "$feed_dir" | cut -d'/' -f2)"
+            local symlink_path="package/feeds/$feed_name/$pkg_name"
+
+            echo "📦 处理 ${pkg_name} ..."
+
+            # 清理旧软链接：package/feeds 下的链接指向旧目录，需先移除
+            if [ -h "$symlink_path" ] || [ -d "$symlink_path" ]; then
+                rm -rf "$symlink_path"
+            fi
+
+            # 旧目录存在则备份为 .old（带时间戳，避免覆盖上次备份）
+            if [ -d "$dest_path" ]; then
+                mv "$dest_path" "${dest_path}.old.$(date +%s)"
+                echo "  旧版 ${pkg_name} 已备份"
+            fi
+
+            # 拷贝新包到目标目录
+            cp -r "$temp_repo/$p" "$dest_path"
+
+            # 还原文件时间戳：取该路径最近一次提交时间，保证增量编译正确
+            local file_time
+            file_time="$(git -C "$temp_repo" log -1 --format=%cd \
+                --date=unix -- "$p" 2>/dev/null || true)"
+            file_time="${file_time:-$fallback_time}"
+            find "$dest_path" -exec touch -m -d "@$file_time" {} + 2>/dev/null || true
+
+            echo "  ✅ ${pkg_name} 注入完成"
+        fi
+    done
+
+    # 清理临时仓库
+    rm -rf "$temp_repo"
+    echo "🎉 ${feed_dir} 注入完毕"
+}
 
 
 # ---------- 注入 banIP 世界地图数据 ----------
@@ -79,9 +158,9 @@ EOF
 # ============================================================
 
 # 1. 注入 golang / rust 包
-#inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang" \
-#    "lang/golang" \
-#    "lang/rust"
+inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang" \
+    "lang/golang" \
+    "lang/rust"
 
 # 2. 清理冲突包 open-app-filter
 echo "🧹 清理冲突包 open-app-filter ..."
