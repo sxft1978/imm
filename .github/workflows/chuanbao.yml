@@ -194,7 +194,7 @@ jobs:
           echo "========================================="
                     
           # 保持运行 1 小时
-          sleep 120
+          sleep 3600
           
       - name: 开启 SSH 服务 (Start SSH service)
         #uses: mxschmitt/action-tmate@v3.24
