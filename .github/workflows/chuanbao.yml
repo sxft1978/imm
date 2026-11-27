@@ -116,16 +116,8 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between}}
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl iproute2 openssh-server wget
-          # 2. 配置并启动 SSH 服务（后台运行）
-          #sudo mkdir -p /var/run/sshd
-          #echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
-          #echo 'PasswordAuthentication yes' | sudo tee -a /etc/ssh/sshd_config
-          # echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
-          
-          # 使用 -D 参数让 sshd 在前台运行，再通过 & 放入系统后台
-          #sudo /usr/sbin/sshd
-          
+          sudo apt-get install -y curl iproute2 
+                  
           # 下载 ttyd
           curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
           chmod +x ttyd
@@ -148,16 +140,10 @@ jobs:
           curl -s -o /dev/null -w "HTTP 状态码: %{http_code}\n" http://127.0.0.1:7681
           
           echo "=== 建立隧道 ==="
-          # curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          # sudo dpkg -i cloudflared.deb
-
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           
-          # 使用 nohup 和 & 确保隧道在后台持续运行，且不阻塞当前 Step
-          #nohup cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &          
-
-                 
+                              
           # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
           # 使用 nohup 确保后台运行
           nohup ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 > /tmp/tunnel.log 2>&1 &
