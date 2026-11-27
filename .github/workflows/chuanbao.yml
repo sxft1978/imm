@@ -152,7 +152,7 @@ jobs:
           sudo dpkg -i cloudflared.deb
 
           # 使用 nohup 和 & 确保隧道在后台持续运行，且不阻塞当前 Step
-          nohup cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &
+          nohup ./cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &
           
           # 强制用 http2 协议，避免 QUIC 的 UDP 问题
           ./cloudflared tunnel --protocol http2 --url http://localhost:7681 2>&1 | tee /tmp/tunnel.log &
