@@ -139,12 +139,11 @@ jobs:
           chmod +x cloudflared-linux-amd64 
           # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
           # 使用 nohup 确保后台运行
-          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 2>&1 |  tee /tmp/tunnel.log &
+          ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 2>&1 |  tee /tmp/tunnel.log &
           # 6. 等待隧道建立并提取地址
           echo "=== 等待隧道建立... ==="
           sleep 15          
-          WEB_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
-          SSH_URL=$(grep -oP 'ssh "root:$SSH_PASSWORD"@[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
+          WEB_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)         
           # 7. 连通性测试 (循环检测直到域名生效)
           if [ -n "$WEB_URL" ]; then
             echo "=== 检测域名连通性 ==="
@@ -161,14 +160,101 @@ jobs:
 
           echo "========================================="
           echo "🚀 隧道已在后台启动！"
-          echo "🌐 Web 终端地址: $WEB_URL"
-          echo "🌐 SSH 终端地址: $SSH_URL"
+          echo "🌐 Web 终端地址: $WEB_URL"        
           echo "👤 Web 登录账号: root"
           echo "🔑 Web 登录密码: ${{ secrets.SSH_PASSWORD }}"
           echo "-----------------------------------------"
                     
           # 保持运行 1 小时
-          sleep 1800
+          sleep 10
+
+
+      - name: Setup Native SSH & Web Terminal (Keep-Alive 修复版)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between }}
+        run: |
+          # 全程失败不中断保活流程
+          set +e
+
+          # ===== 1. 安装依赖 =====
+          sudo apt-get update
+          sudo apt-get install -y curl iproute2 openssh-server wget
+
+          # ===== 2. 配置并启动 SSH 服务 =====
+          sudo mkdir -p /var/run/sshd
+          echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
+          echo 'PasswordAuthentication yes' | sudo tee -a /etc/ssh/sshd_config
+          sudo dpkg-reconfigure openssh-server || true
+          echo "root:${{ secrets.SSH_PASSWORD }}" | sudo chpasswd
+          # -D 前台运行再放后台，nohup 防 step 切换被回收
+          nohup sudo /usr/sbin/sshd -D > /tmp/sshd.log 2>&1 &
+
+          # ===== 3. 下载并启动 ttyd (Web 终端) =====
+          curl -L -o ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          chmod +x ttyd
+          # 守护循环：ttyd 万一退出自动拉起（不退出就不会变）
+          nohup bash -c 'while true; do ./ttyd -p 7681 -i 0.0.0.0 -W -c admin:123 /bin/bash; sleep 2; done' > /tmp/ttyd.log 2>&1 &
+
+          # ===== 4. 下载 cloudflared =====
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+
+          # ===== 5. 启动隧道（二选一） =====
+          #
+          # 【模式A：Quick Tunnel（你原来的写法）】
+          #   优点：零配置、不要 CF 账号
+          #   致命缺点：trycloudflare.com 域名是每次随机的临时域名，
+          #             进程一旦重启，旧域名立即失效、换新域名——
+          #             所以 Quick Tunnel 在原理上做不到“不失效”。
+          #   只能靠下面的守护循环尽量不让它重启来延长寿命。
+          #   注意：你原脚本启动了两条 cloudflared（一条只 ssh、一条 ssh+http），
+          #         第一条还用了没安装的 cloudflared 命令——这是 bug，已删除。
+          #         正确做法：一条进程同时暴露 ssh 和 http 两个 url。
+          nohup bash -c 'while true; do ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 >> /tmp/tunnel.log 2>&1; echo "[tunnel died, restart $(date)]" >> /tmp/tunnel.log; sleep 5; done' > /dev/null 2>&1 &
+
+          # 【模式B：Named Tunnel（真正不失效，推荐长期用）】
+          #   固定你自己的域名，断了重连域名也不变，真正做到不失效。
+          #   前提：CF 账号 + 一个域名，先在本地跑一次建好 tunnel 拿到 TUNNEL_ID，
+          #         把凭据塞进 secrets。需要时取消下面注释、并注释掉模式A。
+          # echo "${{ secrets.CLOUDFLARE_CRED_JSON }}" > /tmp/cf-cred.json
+          # ./cloudflared-linux-amd64 tunnel --no-autoupdate run "${{ secrets.TUNNEL_ID }}" > /tmp/tunnel.log 2>&1 &
+
+          # ===== 6. 等待隧道建立并提取地址 =====
+          echo "=== 等待隧道建立... ==="
+          sleep 15
+          WEB_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
+
+          # ===== 7. 连通性检测 =====
+          if [ -n "$WEB_URL" ]; then
+            echo "=== 检测域名连通性 ==="
+            for i in {1..5}; do
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEB_URL)
+              if [ "$HTTP_CODE" != "000" ]; then
+                echo "域名已生效! (HTTP: $HTTP_CODE)"; break
+              fi
+              echo "域名尚未生效，第 $i 次重试..."; sleep 5
+            done
+          fi
+
+          echo "========================================="
+          echo "Web 终端地址: $WEB_URL"
+          echo "Web 登录账号: admin  密码: 123  (ttyd)"
+          echo "SSH 临时域名: $(echo $WEB_URL | sed 's/https:\/\///')"
+          echo "SSH 用户名: root  密码: (SSH_PASSWORD secret)"
+          echo "-----------------------------------------"
+          echo "提示: Quick Tunnel 域名每次重启会变；要彻底不失效请用模式B命名隧道。"
+          echo "========================================="
+
+          # ===== 8. 保活：让 job 一直挂着，隧道进程就不被回收 =====
+          #   原来只 sleep 3600，1 小时后本 step 结束 -> job 结束 -> 隧道被杀。
+          #   改成无限循环，直到你在 Actions 页面手动 Cancel 这次运行。
+          #   自建 runner（你这套 self-hosted）没有免费 6 小时硬上限，可长期挂。
+          echo "会话保持中（在 Actions 页面 Cancel 工作流才会断开）..."
+          while true; do
+            CUR=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | tail -n 1)
+            echo "[$(date '+%F %T')] 当前地址: $CUR  存活隧道进程数: $(pgrep -c cloudflared)"
+            sleep 300
+          done
+
           
       - name: 开启 SSH 服务 (Start SSH service)
         #uses: mxschmitt/action-tmate@v3.24
@@ -178,7 +264,7 @@ jobs:
         with:
           wait-timeout-minutes: 2
 
-      - name: Load Custom Feeds (before cache key)
+      - name: Copy config
         run: |
           cd openwrt
           cp .config  imm.config
