@@ -40,7 +40,7 @@ jobs:
     steps:
       - name: Check Server Performance
         run: |
-          echo "警告: 分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+          echo "警告: 分配的服务器性能有限，若选择的插件过多，务 必注意CPU性能！"
           df -hT
 
       - name: Create Massive Swap Space
@@ -151,26 +151,30 @@ jobs:
           curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
 
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          
           # 使用 nohup 和 & 确保隧道在后台持续运行，且不阻塞当前 Step
-          nohup ./cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &
-          
-          # 强制用 http2 协议，避免 QUIC 的 UDP 问题
-          ./cloudflared tunnel --protocol http2 --url http://localhost:7681 2>&1 | tee /tmp/tunnel.log &
-          sleep 15
-          # 等待隧道建立并提取地址
+          nohup cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &
+
+          # 5. 等待隧道建立并提取地址
           sleep 10
-          TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)
-          
+          TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)       
+
+                 
+          # 强制用 http2 协议，避免 QUIC 的 UDP 问题
+          nohup ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 2>&1 | tee /tmp/tunnel.log &
+          sleep 15
           echo "=========================================="
           echo "🌐 Web 终端地址:"
           grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1
           echo "=========================================="
-          echo  "🚀 SSH 隧道已在后台启动！"
+          echo "🚀 SSH 隧道已在后台启动！"
           echo "🌐 临时域名: $TUNNEL_URL"
           echo "🔑 用户名: root"
           echo "🔑 密码: ${{ secrets.SSH_PASSWORD }}"
-          echo "=========================================="
-          
+          echo "========================================="
+                    
           # 保持运行 1 小时
           sleep 120
           
