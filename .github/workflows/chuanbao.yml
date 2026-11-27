@@ -116,7 +116,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh_between}}
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl iproute2 openssh-server
+          sudo apt-get install -y curl iproute2 openssh-server wget
           # 2. 配置并启动 SSH 服务（后台运行）
           sudo mkdir -p /var/run/sshd
           echo 'PermitRootLogin yes' | sudo tee -a /etc/ssh/sshd_config
@@ -134,8 +134,8 @@ jobs:
           ./ttyd --version
           
           echo "=== 启动 ttyd ==="
-          # 用 -W 代替 --writable，用 -- 分隔启动命令
-          ./ttyd -p 7681 -i 0.0.0.0 -W -c admin:123 -- /bin/bash > /tmp/ttyd.log 2>&1 &
+          # 使用 nohup 确保后台运行不被 Actions 杀掉
+          nohup ./ttyd -p 7681 -i 0.0.0.0 -W  -c admin:123 /bin/bash > /tmp/ttyd.log 2>&1 &
           sleep 3
           
           echo "=== ttyd 日志 ==="
@@ -148,31 +148,49 @@ jobs:
           curl -s -o /dev/null -w "HTTP 状态码: %{http_code}\n" http://127.0.0.1:7681
           
           echo "=== 建立隧道 ==="
-          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared.deb
+          # curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          # sudo dpkg -i cloudflared.deb
 
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           
           # 使用 nohup 和 & 确保隧道在后台持续运行，且不阻塞当前 Step
-          nohup cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &
-
-          # 5. 等待隧道建立并提取地址
-          sleep 10
-          TUNNEL_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)       
+          nohup cloudflared tunnel --no-autoupdate --url ssh://localhost:22 > /tmp/cloudflared.log 2>&1 &          
 
                  
-          # 强制用 http2 协议，避免 QUIC 的 UDP 问题
-          nohup ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 2>&1 | tee /tmp/tunnel.log &
+          # 5. 启动 Cloudflare Tunnel (同时暴露 Web 和 SSH)
+          # 使用 nohup 确保后台运行
+          nohup ./cloudflared-linux-amd64 tunnel --no-autoupdate --url http://localhost:7681 --url ssh://localhost:22 > /tmp/tunnel.log 2>&1 &
+          
+          # 6. 等待隧道建立并提取地址
+          echo "=== 等待隧道建立... ==="
           sleep 15
-          echo "=========================================="
-          echo "🌐 Web 终端地址:"
-          grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1
-          echo "=========================================="
-          echo "🚀 SSH 隧道已在后台启动！"
-          echo "🌐 临时域名: $TUNNEL_URL"
-          echo "🔑 用户名: root"
-          echo "🔑 密码: ${{ secrets.SSH_PASSWORD }}"
+          
+          WEB_URL=$(grep -oP 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -n 1)
+          
+          # 7. 连通性测试 (循环检测直到域名生效)
+          if [ -n "$WEB_URL" ]; then
+            echo "=== 检测域名连通性 ==="
+            for i in {1..5}; do
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $WEB_URL)
+              if [ "$HTTP_CODE" != "000" ]; then
+                echo "域名已生效! (HTTP状态码: $HTTP_CODE)"
+                break
+              fi
+              echo "域名尚未生效，第 $i 次重试..."
+              sleep 5
+            done
+          fi
+
+          echo "========================================="
+          echo "🚀 隧道已在后台启动！"
+          echo "🌐 Web 终端地址: $WEB_URL"
+          echo "👤 Web 登录账号: root"
+          echo "🔑 Web 登录密码: ${{ secrets.SSH_PASSWORD }}"
+          echo "-----------------------------------------"
+          echo "🔑 SSH 临时域名: $(echo $WEB_URL | sed 's/https:\/\///')"
+          echo "🔑 SSH 用户名: root"
+          echo "🔑 SSH 密码: ${{ secrets.SSH_PASSWORD }}"
           echo "========================================="
                     
           # 保持运行 1 小时
