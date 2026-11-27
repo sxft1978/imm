@@ -166,7 +166,7 @@ jobs:
           echo "-----------------------------------------"
                     
           # 保持运行 1 小时
-          sleep 10
+          sleep 1800
 
           
       - name: 开启 SSH 服务 (Start SSH service)
