@@ -10,16 +10,16 @@
 
 set -euo pipefail
 
-# ----# ---------- 路径配置 ----------
+# ---------- 路径配置 ----------
 # 补丁源目录：GitHub Actions 环境使用工作区，本地编译回退到上级目录
 if [ "$GITHUB_ACTIONS" = "true" ] && [ -n "$GITHUB_RUN_ID" ]; then
     PATCHES_SRC_DIR="$GITHUB_WORKSPACE"
 else
     PATCHES_SRC_DIR="../imm"
 fi
-# 清理可能存在的临时残留
-rm -rf temp_repo
------ 注入 banIP 世界地图数据 ----------
+
+
+# ---------- 注入 banIP 世界地图数据 ----------
 # 将 world-50m.json 拷贝到 banIP LuCI 前端静态资源目录
 inject_banip() {
     local banip_ui_dir="./feeds/luci/applications/luci-app-banip/htdocs/luci-static/resources/view/banip/"
@@ -63,7 +63,6 @@ if [ -f "$SSHD_CONFIG" ]; then
 fi
 
 # --- 4. 按顺序启动 OpenSSH 服务 ---
-/etc/init.d/dropbear start
 /etc/init.d/sshd enable
 /etc/init.d/sshd start
 
@@ -80,8 +79,8 @@ EOF
 
 # 1. 注入 golang / rust 包
 #inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang" \
-  #  "lang/golang" \
-  #  "lang/rust"
+#    "lang/golang" \
+#    "lang/rust"
 
 # 2. 清理冲突包 open-app-filter
 echo "🧹 清理冲突包 open-app-filter ..."
@@ -93,35 +92,5 @@ inject_banip
 
 # 4. 配置 SSH 双端口
 configure_ssh
-
-chmod +x files/etc/uci-defaults/99-custom-settings
-
-
-# ============================================================
-# 修改编译源码而配置
-# ============================================================
-
-#if [ -f .config ]; then
- #   sed -i 's/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=4/CONFIG_TARGET_SQUASHFS_BLOCK_READERS=2/' .config
-#    sed -i 's/CONFIG_TARGET_SQUASHFS_SMALL_READERS=4/CONFIG_TARGET_SQUASHFS_SMALL_READERS=2/' .config
-#fi
-#make defconfig
-
-# 2. 改压缩算法
-#COMP=zstd
-#sed -i "s/SQUASHFSCOMP := gzip.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
-#sed -i "s/SQUASHFSCOMP := xz.*/SQUASHFSCOMP := ${COMP}/" include/image.mk
-
-# 3. 验证是否改成功
-#echo "--- 当前 SQUASHFSCOMP 设置 ---"
-#grep -n "SQUASHFSCOMP" include/image.mk
-
-#if grep -q "SQUASHFSCOMP := zstd" include/image.mk; then
-  #  echo "[OK] SQUASHFSCOMP 已改为 zstd"
-#else
-#    echo "[ERROR] 修改失败！当前内容：" >&2
-#    grep -n "SQUASHFSCOMP" include/image.mk >&2
-#    exit 1
-#fi
 
 echo "✅ 全部构建增强配置完成"
