@@ -9,7 +9,17 @@
 # ============================================================
 
 set -euo pipefail
-# ---------- 注入 banIP 世界地图数据 ----------
+
+# ----# ---------- 路径配置 ----------
+# 补丁源目录：GitHub Actions 环境使用工作区，本地编译回退到上级目录
+if [ "$GITHUB_ACTIONS" = "true" ] && [ -n "$GITHUB_RUN_ID" ]; then
+    PATCHES_SRC_DIR="$GITHUB_WORKSPACE"
+else
+    PATCHES_SRC_DIR="../imm"
+fi
+# 清理可能存在的临时残留
+rm -rf temp_repo
+----- 注入 banIP 世界地图数据 ----------
 # 将 world-50m.json 拷贝到 banIP LuCI 前端静态资源目录
 inject_banip() {
     local banip_ui_dir="./feeds/luci/applications/luci-app-banip/htdocs/luci-static/resources/view/banip/"
