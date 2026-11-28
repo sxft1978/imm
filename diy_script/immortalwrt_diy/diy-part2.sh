@@ -69,9 +69,9 @@ EOF
 # ============================================================
 
 # 1. 注入 golang / rust 包
-inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang" \
-    "lang/golang" \
-    "lang/rust"
+#inject_feed "https://github.com/openwrt/packages.git" "feeds/packages/lang" \
+  #  "lang/golang" \
+  #  "lang/rust"
 
 # 2. 清理冲突包 open-app-filter
 echo "🧹 清理冲突包 open-app-filter ..."
